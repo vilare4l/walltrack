@@ -1,0 +1,113 @@
+# generated: 2025-12-15
+# project: walltrack
+# project_key: walltrack
+# tracking_system: file-system
+# story_location: docs/sprint-artifacts
+
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+#
+# Epic Status Transitions:
+#   - backlog → in-progress: Automatically when first story is created (via create-story)
+#   - in-progress → done: Manually when all stories reach 'done' status
+#
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - drafted: Story file created in stories folder
+#   - ready-for-dev: Draft approved and story context created
+#   - in-progress: Developer actively working on implementation
+#   - review: Ready for code review (via Dev's code-review workflow)
+#   - done: Story completed
+#
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - completed: Retrospective has been done
+#
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when first story is created
+# - Stories can be worked in parallel if team capacity allows
+# - SM typically drafts next story after previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+
+generated: 2025-12-15
+project: walltrack
+project_key: walltrack
+tracking_system: file-system
+story_location: docs/sprint-artifacts
+
+development_status:
+  # Epic 1: Wallet Intelligence & Discovery
+  epic-1: backlog
+  1-1-project-initialization-and-structure: drafted
+  1-2-core-configuration-layer: drafted
+  1-3-database-connections: drafted
+  1-4-wallet-discovery-engine: drafted
+  1-5-wallet-performance-profiling: drafted
+  1-6-wallet-decay-detection: drafted
+  1-7-wallet-blacklisting: drafted
+  1-8-basic-dashboard-wallet-views: drafted
+  epic-1-retrospective: optional
+
+  # Epic 2: Cluster Analysis & Graph Intelligence
+  epic-2: backlog
+  2-1-wallet-funding-relationship-detection: drafted
+  2-2-synchronized-buying-pattern-detection: drafted
+  2-3-co-occurrence-analysis: drafted
+  2-4-cluster-grouping-algorithm: drafted
+  2-5-cluster-leader-identification: drafted
+  2-6-cluster-signal-amplification: drafted
+  2-7-dashboard-cluster-visualization: drafted
+  epic-2-retrospective: optional
+
+  # Epic 3: Real-Time Signal Processing & Scoring
+  epic-3: backlog
+  3-1-helius-webhook-integration: drafted
+  3-2-signal-filtering: drafted
+  3-3-token-characteristics-fetching: drafted
+  3-4-multi-factor-signal-scoring: drafted
+  3-5-scoring-threshold-application: drafted
+  3-6-signal-logging-storage: drafted
+  3-7-dashboard-scoring-configuration: drafted
+  epic-3-retrospective: optional
+
+  # Epic 4: Automated Trade Execution & Position Management
+  epic-4: backlog
+  4-1-trading-wallet-connection: drafted
+  4-2-jupiter-api-integration: drafted
+  4-3-dynamic-position-sizing: drafted
+  4-4-exit-strategy-data-model: drafted
+  4-5-stop-loss-take-profit-monitoring: drafted
+  4-6-trailing-stop-execution: drafted
+  4-7-time-based-exit-rules: drafted
+  4-8-score-based-strategy-assignment: drafted
+  4-9-position-tracking-status: drafted
+  4-10-dashboard-positions-trade-history: drafted
+  4-11-dashboard-exit-strategy-management: drafted
+  epic-4-retrospective: optional
+
+  # Epic 5: Risk Management & Capital Protection
+  epic-5: backlog
+  5-1-drawdown-circuit-breaker: drafted
+  5-2-consecutive-loss-position-reduction: drafted
+  5-3-win-rate-circuit-breaker: drafted
+  5-4-max-concurrent-position-limits: drafted
+  5-5-circuit-breaker-alert-system: drafted
+  5-6-manual-pause-resume-controls: drafted
+  5-7-dashboard-status-risk-config: drafted
+  epic-5-retrospective: optional
+
+  # Epic 6: Feedback Loop & Performance Analytics
+  epic-6: backlog
+  6-1-trade-outcome-recording: drafted
+  6-2-wallet-score-updates: drafted
+  6-3-scoring-model-recalibration: drafted
+  6-4-signal-accuracy-tracking: drafted
+  6-5-pattern-analysis-insights: drafted
+  6-6-dashboard-performance-analytics: drafted
+  6-7-backtest-preview: drafted
+  epic-6-retrospective: optional
