@@ -42,10 +42,10 @@ story_location: docs/sprint-artifacts
 
 development_status:
   # Epic 1: Wallet Intelligence & Discovery
-  epic-1: backlog
+  epic-1: in-progress
   1-1-project-initialization-and-structure: drafted
   1-2-core-configuration-layer: drafted
-  1-3-database-connections: drafted
+  1-3-database-connections: review
   1-4-wallet-discovery-engine: drafted
   1-5-wallet-performance-profiling: drafted
   1-6-wallet-decay-detection: drafted

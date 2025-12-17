@@ -1,0 +1,1 @@
+"""Exit strategy data model."""

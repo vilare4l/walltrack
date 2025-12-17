@@ -1,0 +1,1 @@
+"""Scoring weights configuration."""

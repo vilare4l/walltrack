@@ -27,7 +27,6 @@ from tests.factories.signal import SignalFactory
 from tests.factories.trade import TradeFactory
 from tests.factories.wallet import WalletFactory
 
-
 # =============================================================================
 # Environment Configuration
 # =============================================================================
@@ -35,14 +34,22 @@ from tests.factories.wallet import WalletFactory
 
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_environment() -> Generator[None, None, None]:
-    """Set up test environment variables."""
+    """Set up test environment variables.
+
+    Loads .env file first, then sets defaults for any missing variables.
+    """
+    from dotenv import load_dotenv
+
     original_env = os.environ.copy()
 
-    # Set test-specific environment variables
+    # Load .env file if it exists (won't override existing env vars)
+    load_dotenv()
+
+    # Set test-specific environment variables (only if not already set)
     os.environ.setdefault("WALLTRACK_ENV", "test")
     os.environ.setdefault("NEO4J_URI", "bolt://localhost:7687")
     os.environ.setdefault("NEO4J_USER", "neo4j")
-    os.environ.setdefault("NEO4J_PASSWORD", "testpassword")
+    os.environ.setdefault("NEO4J_PASSWORD", "neo4jpass")
     os.environ.setdefault("SUPABASE_URL", "http://localhost:54321")
     os.environ.setdefault("SUPABASE_KEY", "test-key")
 

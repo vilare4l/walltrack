@@ -58,3 +58,21 @@ class ConfigurationError(WallTrackError):
     """Raised when configuration is invalid or missing."""
 
     pass
+
+
+class DatabaseConnectionError(WallTrackError):
+    """Raised when database connection fails."""
+
+    pass
+
+
+class SignalProcessingError(WallTrackError):
+    """Raised when signal processing fails."""
+
+    pass
+
+
+class TradeExecutionError(WallTrackError):
+    """Raised when trade execution fails."""
+
+    pass
