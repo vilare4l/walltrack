@@ -2,7 +2,7 @@
 
 ## Story Info
 - **Epic**: Epic 2 - Cluster Analysis & Graph Intelligence
-- **Status**: ready
+- **Status**: done
 - **Priority**: Medium
 - **FR**: FR12
 
@@ -767,16 +767,16 @@ class TestCalculateAmplificationFactor:
 
 ## Implementation Tasks
 
-- [ ] Create cluster activity query
-- [ ] Implement 10-minute window check
-- [ ] Calculate amplification factor
-- [ ] Integrate with signal scoring engine
-- [ ] Log amplification details
-- [ ] Make thresholds configurable
+- [x] Create cluster activity query
+- [x] Implement 10-minute window check
+- [x] Calculate amplification factor
+- [x] Integrate with signal scoring engine
+- [x] Log amplification details
+- [x] Make thresholds configurable
 
 ## Definition of Done
 
-- [ ] Cluster activity detected correctly
-- [ ] Amplification applied when conditions met
-- [ ] Factor proportional to cluster activity
-- [ ] Amplification details logged
+- [x] Cluster activity detected correctly
+- [x] Amplification applied when conditions met
+- [x] Factor proportional to cluster activity
+- [x] Amplification details logged

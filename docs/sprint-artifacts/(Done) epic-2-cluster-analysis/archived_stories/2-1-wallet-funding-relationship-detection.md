@@ -2,7 +2,7 @@
 
 ## Story Info
 - **Epic**: Epic 2 - Cluster Analysis & Graph Intelligence
-- **Status**: ready
+- **Status**: done
 - **Priority**: High
 - **FR**: FR7
 
@@ -1026,16 +1026,16 @@ class TestStrengthCalculation:
 
 ## Implementation Tasks
 
-- [ ] Create funding analysis service
-- [ ] Implement Neo4j FUNDED_BY edge creation
-- [ ] Add edge properties (amount, timestamp, tx_signature)
-- [ ] Implement relationship strength calculation
-- [ ] Create funding tree traversal query
-- [ ] Implement common ancestor detection
+- [x] Create funding analysis service
+- [x] Implement Neo4j FUNDED_BY edge creation
+- [x] Add edge properties (amount, timestamp, tx_signature)
+- [x] Implement relationship strength calculation
+- [x] Create funding tree traversal query
+- [x] Implement common ancestor detection
 
 ## Definition of Done
 
-- [ ] Funding relationships detected from SOL transfers
-- [ ] FUNDED_BY edges created in Neo4j with properties
-- [ ] Funding tree queries work up to N levels
-- [ ] Common ancestors identifiable between wallets
+- [x] Funding relationships detected from SOL transfers
+- [x] FUNDED_BY edges created in Neo4j with properties
+- [x] Funding tree queries work up to N levels
+- [x] Common ancestors identifiable between wallets

@@ -2,7 +2,7 @@
 
 ## Story Info
 - **Epic**: Epic 2 - Cluster Analysis & Graph Intelligence
-- **Status**: ready
+- **Status**: done
 - **Priority**: Medium
 - **FR**: FR11
 
@@ -753,16 +753,16 @@ class TestGetClusterLeaders:
 
 ## Implementation Tasks
 
-- [ ] Create leader analysis module
-- [ ] Implement timing precedence calculation
-- [ ] Calculate leader_score per wallet
-- [ ] Flag top N leaders per cluster
-- [ ] Store leader_score on Wallet node
-- [ ] Expose leader status for signal scoring
+- [x] Create leader analysis module
+- [x] Implement timing precedence calculation
+- [x] Calculate leader_score per wallet
+- [x] Flag top N leaders per cluster
+- [x] Store leader_score on Wallet node
+- [x] Expose leader status for signal scoring
 
 ## Definition of Done
 
-- [ ] Leaders identified per cluster
-- [ ] Leader scores calculated accurately
-- [ ] Leader status queryable
-- [ ] Leader info available for scoring
+- [x] Leaders identified per cluster
+- [x] Leader scores calculated accurately
+- [x] Leader status queryable
+- [x] Leader info available for scoring

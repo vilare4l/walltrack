@@ -7,7 +7,7 @@ import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from walltrack.api.routes import config, health, signals, trades, wallets, webhooks
+from walltrack.api.routes import clusters, config, health, signals, trades, wallets, webhooks
 from walltrack.config.logging import configure_logging
 from walltrack.config.settings import get_settings
 from walltrack.data.neo4j.client import close_neo4j_client, get_neo4j_client
@@ -70,6 +70,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(webhooks.router, prefix="/webhooks")
     app.include_router(wallets.router, prefix="/api/wallets")
+    app.include_router(clusters.router, prefix="/api")
     app.include_router(signals.router, prefix="/api/signals")
     app.include_router(trades.router, prefix="/api/trades")
     app.include_router(config.router, prefix="/api/config")

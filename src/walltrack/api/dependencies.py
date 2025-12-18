@@ -5,9 +5,15 @@ from typing import Annotated
 from fastapi import Depends
 
 from walltrack.config.settings import Settings, get_settings
+from walltrack.core.blacklist_service import BlacklistService
+from walltrack.core.cluster.cooccurrence import CoOccurrenceAnalyzer
+from walltrack.core.cluster.funding_analyzer import FundingAnalyzer
+from walltrack.core.cluster.grouping import ClusterGrouper
+from walltrack.core.cluster.leader_detection import LeaderDetector
+from walltrack.core.cluster.signal_amplifier import SignalAmplifier
+from walltrack.core.cluster.sync_detector import SyncBuyDetector
 from walltrack.data.neo4j.client import Neo4jClient, get_neo4j_client
 from walltrack.data.supabase.client import SupabaseClient, get_supabase_client
-from walltrack.core.blacklist_service import BlacklistService
 from walltrack.data.supabase.repositories.blacklist_history_repo import (
     BlacklistHistoryRepository,
 )
@@ -91,3 +97,56 @@ BlacklistHistoryRepoDep = Annotated[
 Neo4jDep = Annotated[Neo4jClient, Depends(get_neo4j_client)]
 SupabaseDep = Annotated[SupabaseClient, Depends(get_supabase_client)]
 HeliusDep = Annotated[HeliusClient, Depends(get_helius_client)]
+
+
+# Cluster analysis dependencies
+async def get_funding_analyzer() -> FundingAnalyzer:
+    """Get funding analyzer dependency."""
+    neo4j = await get_neo4j_client()
+    helius = await get_helius_client()
+    return FundingAnalyzer(neo4j, helius)
+
+
+async def get_sync_detector() -> SyncBuyDetector:
+    """Get sync buy detector dependency."""
+    neo4j = await get_neo4j_client()
+    helius = await get_helius_client()
+    return SyncBuyDetector(neo4j, helius)
+
+
+async def get_cooccurrence_analyzer() -> CoOccurrenceAnalyzer:
+    """Get co-occurrence analyzer dependency."""
+    neo4j = await get_neo4j_client()
+    supabase = await get_supabase_client()
+    wallet_repo = WalletRepository(supabase)
+    return CoOccurrenceAnalyzer(neo4j, wallet_repo)
+
+
+async def get_cluster_grouper() -> ClusterGrouper:
+    """Get cluster grouper dependency."""
+    neo4j = await get_neo4j_client()
+    return ClusterGrouper(neo4j)
+
+
+async def get_leader_detector() -> LeaderDetector:
+    """Get leader detector dependency."""
+    neo4j = await get_neo4j_client()
+    supabase = await get_supabase_client()
+    wallet_repo = WalletRepository(supabase)
+    return LeaderDetector(neo4j, wallet_repo)
+
+
+async def get_cluster_signal_amplifier() -> SignalAmplifier:
+    """Get signal amplifier dependency."""
+    neo4j = await get_neo4j_client()
+    supabase = await get_supabase_client()
+    wallet_repo = WalletRepository(supabase)
+    return SignalAmplifier(neo4j, wallet_repo)
+
+
+FundingAnalyzerDep = Annotated[FundingAnalyzer, Depends(get_funding_analyzer)]
+SyncDetectorDep = Annotated[SyncBuyDetector, Depends(get_sync_detector)]
+CoOccurrenceAnalyzerDep = Annotated[CoOccurrenceAnalyzer, Depends(get_cooccurrence_analyzer)]
+ClusterGrouperDep = Annotated[ClusterGrouper, Depends(get_cluster_grouper)]
+LeaderDetectorDep = Annotated[LeaderDetector, Depends(get_leader_detector)]
+SignalAmplifierDep = Annotated[SignalAmplifier, Depends(get_cluster_signal_amplifier)]
