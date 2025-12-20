@@ -65,36 +65,36 @@ development_status:
   epic-2-retrospective: optional
 
   # Epic 3: Real-Time Signal Processing & Scoring
-  epic-3: backlog
-  3-1-helius-webhook-integration: drafted
-  3-2-signal-filtering: drafted
-  3-3-token-characteristics-fetching: drafted
-  3-4-multi-factor-signal-scoring: drafted
-  3-5-scoring-threshold-application: drafted
-  3-6-signal-logging-storage: drafted
-  3-7-dashboard-scoring-configuration: drafted
+  epic-3: in-progress
+  3-1-helius-webhook-integration: review
+  3-2-signal-filtering: review
+  3-3-token-characteristics-fetching: review
+  3-4-multi-factor-signal-scoring: review
+  3-5-scoring-threshold-application: review
+  3-6-signal-logging-storage: review
+  3-7-dashboard-scoring-configuration: review
   epic-3-retrospective: optional
 
   # Epic 4: Automated Trade Execution & Position Management
-  epic-4: backlog
-  4-1-trading-wallet-connection: drafted
-  4-2-jupiter-api-integration: drafted
-  4-3-dynamic-position-sizing: drafted
-  4-4-exit-strategy-data-model: drafted
-  4-5-stop-loss-take-profit-monitoring: drafted
-  4-6-trailing-stop-execution: drafted
-  4-7-time-based-exit-rules: drafted
-  4-8-score-based-strategy-assignment: drafted
-  4-9-position-tracking-status: drafted
-  4-10-dashboard-positions-trade-history: drafted
-  4-11-dashboard-exit-strategy-management: drafted
+  epic-4: in-progress
+  4-1-trading-wallet-connection: review
+  4-2-jupiter-api-integration: review
+  4-3-dynamic-position-sizing: review
+  4-4-exit-strategy-data-model: review
+  4-5-stop-loss-take-profit-monitoring: review
+  4-6-trailing-stop-execution: review
+  4-7-time-based-exit-rules: review
+  4-8-score-based-strategy-assignment: review
+  4-9-position-tracking-status: review
+  4-10-dashboard-positions-trade-history: review
+  4-11-dashboard-exit-strategy-management: review
   epic-4-retrospective: optional
 
   # Epic 5: Risk Management & Capital Protection
-  epic-5: backlog
-  5-1-drawdown-circuit-breaker: drafted
-  5-2-consecutive-loss-position-reduction: drafted
-  5-3-win-rate-circuit-breaker: drafted
+  epic-5: in-progress
+  5-1-drawdown-circuit-breaker: review
+  5-2-consecutive-loss-position-reduction: review
+  5-3-win-rate-circuit-breaker: review
   5-4-max-concurrent-position-limits: drafted
   5-5-circuit-breaker-alert-system: drafted
   5-6-manual-pause-resume-controls: drafted
@@ -102,12 +102,12 @@ development_status:
   epic-5-retrospective: optional
 
   # Epic 6: Feedback Loop & Performance Analytics
-  epic-6: backlog
-  6-1-trade-outcome-recording: drafted
-  6-2-wallet-score-updates: drafted
-  6-3-scoring-model-recalibration: drafted
-  6-4-signal-accuracy-tracking: drafted
-  6-5-pattern-analysis-insights: drafted
-  6-6-dashboard-performance-analytics: drafted
-  6-7-backtest-preview: drafted
+  epic-6: in-progress
+  6-1-trade-outcome-recording: review
+  6-2-wallet-score-updates: review
+  6-3-scoring-model-recalibration: review
+  6-4-signal-accuracy-tracking: review
+  6-5-pattern-analysis-insights: review
+  6-6-dashboard-performance-analytics: review
+  6-7-backtest-preview: review
   epic-6-retrospective: optional

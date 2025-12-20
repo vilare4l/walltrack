@@ -1,0 +1,16 @@
+"""Solana blockchain constants."""
+
+# Native SOL mint (wrapped SOL)
+WSOL_MINT = "So11111111111111111111111111111111111111112"
+
+# Decimals
+SOL_DECIMALS = 9
+LAMPORTS_PER_SOL = 1_000_000_000
+
+# Common program IDs
+TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+ASSOCIATED_TOKEN_PROGRAM_ID = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+
+# Transaction settings
+MAX_TRANSACTION_SIZE = 1232  # bytes
+COMPUTE_UNIT_LIMIT = 200_000
