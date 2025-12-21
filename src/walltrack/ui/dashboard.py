@@ -36,29 +36,29 @@ def create_dashboard() -> gr.Blocks:
             .status-blacklisted { background-color: #ef4444; }
         """,
     ) as dashboard:
-        gr.Markdown("# WallTrack Dashboard")
-        gr.Markdown("Autonomous Solana Memecoin Trading System")
+        gr.Markdown("# WallTrack Dashboard", elem_id="dashboard-title")
+        gr.Markdown("Autonomous Solana Memecoin Trading System", elem_id="dashboard-subtitle")
 
-        with gr.Tabs():
-            with gr.Tab("Status", id="status"):
+        with gr.Tabs(elem_id="main-tabs"):
+            with gr.Tab("Status", id="status", elem_id="tab-status"):
                 create_status_tab()
 
-            with gr.Tab("Wallets", id="wallets"):
+            with gr.Tab("Wallets", id="wallets", elem_id="tab-wallets"):
                 create_wallets_tab()
 
-            with gr.Tab("Clusters", id="clusters"):
+            with gr.Tab("Clusters", id="clusters", elem_id="tab-clusters"):
                 create_clusters_tab()
 
-            with gr.Tab("Signals", id="signals"):
+            with gr.Tab("Signals", id="signals", elem_id="tab-signals"):
                 create_signals_tab()
 
-            with gr.Tab("Positions", id="positions"):
+            with gr.Tab("Positions", id="positions", elem_id="tab-positions"):
                 create_positions_tab()
 
-            with gr.Tab("Performance", id="performance"):
+            with gr.Tab("Performance", id="performance", elem_id="tab-performance"):
                 create_performance_tab()
 
-            with gr.Tab("Config", id="config"):
+            with gr.Tab("Config", id="config", elem_id="tab-config"):
                 create_config_tab()
 
     log.info("dashboard_created", debug=settings.debug)

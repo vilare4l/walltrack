@@ -108,7 +108,7 @@ def _create_active_positions_view() -> None:
     gr.Markdown("### Open Positions")
 
     with gr.Row():
-        refresh_btn = gr.Button("Refresh", size="sm")
+        refresh_btn = gr.Button("Refresh", size="sm", elem_id="positions-refresh-btn")
 
     positions_table = gr.Dataframe(
         headers=[
@@ -123,6 +123,7 @@ def _create_active_positions_view() -> None:
         ],
         interactive=False,
         wrap=True,
+        elem_id="positions-table",
     )
 
     gr.Markdown("---")
@@ -133,10 +134,13 @@ def _create_active_positions_view() -> None:
             label="Position ID",
             placeholder="Enter position ID to view details",
             scale=3,
+            elem_id="positions-id-input",
         )
-        _load_btn = gr.Button("Load", scale=1)
+        _load_btn = gr.Button("Load", scale=1, elem_id="positions-load-btn")
 
-    _position_detail = gr.Markdown("*Select a position to view details*")
+    _position_detail = gr.Markdown(
+        "*Select a position to view details*", elem_id="positions-detail"
+    )
 
     # Note: Actual data loading would be connected here
     # Using placeholder data for UI structure
@@ -166,15 +170,20 @@ def _create_trade_history_view() -> None:
     gr.Markdown("### Trade History")
 
     with gr.Row():
-        date_from = gr.Textbox(label="From", placeholder="YYYY-MM-DD", scale=1)
-        date_to = gr.Textbox(label="To", placeholder="YYYY-MM-DD", scale=1)
+        date_from = gr.Textbox(
+            label="From", placeholder="YYYY-MM-DD", scale=1, elem_id="history-date-from"
+        )
+        date_to = gr.Textbox(
+            label="To", placeholder="YYYY-MM-DD", scale=1, elem_id="history-date-to"
+        )
         pnl_filter = gr.Dropdown(
             label="PnL Filter",
             choices=["All", "Profitable", "Loss"],
             value="All",
             scale=1,
+            elem_id="history-pnl-filter",
         )
-        search_btn = gr.Button("Search", scale=1)
+        search_btn = gr.Button("Search", scale=1, elem_id="history-search-btn")
 
     history_table = gr.Dataframe(
         headers=[
@@ -188,6 +197,7 @@ def _create_trade_history_view() -> None:
         ],
         interactive=False,
         wrap=True,
+        elem_id="history-table",
     )
 
     with gr.Row():

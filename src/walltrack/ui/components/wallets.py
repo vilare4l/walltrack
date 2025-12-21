@@ -265,11 +265,13 @@ def _create_wallet_list_ui() -> tuple[gr.Dropdown, gr.Slider, gr.Button, gr.Data
             value="all",
             label="Status Filter",
             scale=1,
+            elem_id="wallets-status-filter",
         )
         min_score = gr.Slider(
-            minimum=0, maximum=1, value=0, step=0.05, label="Min Score", scale=1
+            minimum=0, maximum=1, value=0, step=0.05, label="Min Score", scale=1,
+            elem_id="wallets-min-score",
         )
-        refresh_btn = gr.Button("Refresh", scale=1)
+        refresh_btn = gr.Button("Refresh", scale=1, elem_id="wallets-refresh-btn")
 
     wallet_table = gr.Dataframe(
         headers=["Address", "Status", "Score", "Win Rate", "Total PnL", "Trades", "Last Signal"],
@@ -277,6 +279,7 @@ def _create_wallet_list_ui() -> tuple[gr.Dropdown, gr.Slider, gr.Button, gr.Data
         interactive=False,
         row_count=20,
         col_count=(7, "fixed"),  # type: ignore[arg-type]
+        elem_id="wallets-table",
     )
 
     return status_filter, min_score, refresh_btn, wallet_table
@@ -290,16 +293,22 @@ def _create_wallet_detail_ui() -> tuple[gr.Textbox, gr.Markdown, gr.Textbox, gr.
         label="Selected Wallet",
         placeholder="Click a wallet to view details",
         interactive=False,
+        elem_id="wallets-selected-address",
     )
-    wallet_detail = gr.Markdown("Select a wallet to view details")
+    wallet_detail = gr.Markdown("Select a wallet to view details", elem_id="wallets-detail")
 
     with gr.Row():
         blacklist_reason = gr.Textbox(
-            label="Blacklist Reason", placeholder="Enter reason...", scale=3
+            label="Blacklist Reason", placeholder="Enter reason...", scale=3,
+            elem_id="wallets-blacklist-reason",
         )
-        blacklist_btn = gr.Button("Blacklist", variant="stop", scale=1)
+        blacklist_btn = gr.Button(
+            "Blacklist", variant="stop", scale=1, elem_id="wallets-blacklist-btn"
+        )
 
-    unblacklist_btn = gr.Button("Remove from Blacklist", variant="secondary")
+    unblacklist_btn = gr.Button(
+        "Remove from Blacklist", variant="secondary", elem_id="wallets-unblacklist-btn"
+    )
 
     return selected_address, wallet_detail, blacklist_reason, blacklist_btn, unblacklist_btn
 
@@ -315,10 +324,13 @@ def _create_add_wallet_ui() -> tuple[gr.Textbox, gr.Button, gr.Markdown]:
             label="Wallet Address",
             placeholder="Enter Solana wallet address...",
             scale=4,
+            elem_id="wallets-new-address",
         )
-        add_wallet_btn = gr.Button("Add & Profile", variant="primary", scale=1)
+        add_wallet_btn = gr.Button(
+            "Add & Profile", variant="primary", scale=1, elem_id="wallets-add-btn"
+        )
 
-    add_wallet_result = gr.Markdown("")
+    add_wallet_result = gr.Markdown("", elem_id="wallets-add-result")
 
     return new_wallet_address, add_wallet_btn, add_wallet_result
 

@@ -441,6 +441,7 @@ def create_config_tab() -> None:  # noqa: PLR0915
                         step=0.01,
                         label="Wallet Score Weight",
                         info="Win rate, PnL, timing, leader status",
+                        elem_id="config-wallet-weight",
                     )
 
                     cluster_slider = gr.Slider(
@@ -450,6 +451,7 @@ def create_config_tab() -> None:  # noqa: PLR0915
                         step=0.01,
                         label="Cluster Score Weight",
                         info="Cluster activity amplification",
+                        elem_id="config-cluster-weight",
                     )
 
                     token_slider = gr.Slider(
@@ -459,6 +461,7 @@ def create_config_tab() -> None:  # noqa: PLR0915
                         step=0.01,
                         label="Token Score Weight",
                         info="Liquidity, market cap, holders",
+                        elem_id="config-token-weight",
                     )
 
                     context_slider = gr.Slider(
@@ -468,28 +471,33 @@ def create_config_tab() -> None:  # noqa: PLR0915
                         step=0.01,
                         label="Context Score Weight",
                         info="Time of day, market conditions",
+                        elem_id="config-context-weight",
                     )
 
                     sum_display = gr.Textbox(
                         label="Weight Sum",
                         value="Total: 1.000 (valid)",
                         interactive=False,
+                        elem_id="config-weight-sum",
                     )
 
                     with gr.Row():
                         normalize_btn = gr.Button(
                             "Normalize to 1.0",
                             variant="secondary",
+                            elem_id="config-normalize-btn",
                         )
                         apply_btn = gr.Button(
                             "Apply Weights",
                             variant="primary",
+                            elem_id="config-apply-weights-btn",
                         )
 
                     status_text = gr.Textbox(
                         label="Status",
                         value="",
                         interactive=False,
+                        elem_id="config-status",
                     )
 
                 with gr.Column(scale=1):
@@ -547,6 +555,7 @@ def create_config_tab() -> None:  # noqa: PLR0915
                         step=0.01,
                         label="Minimum Trade Threshold",
                         info="Signals below this score will not trigger trades",
+                        elem_id="config-trade-threshold",
                     )
 
                     high_conviction_slider = gr.Slider(
@@ -556,17 +565,20 @@ def create_config_tab() -> None:  # noqa: PLR0915
                         step=0.01,
                         label="High Conviction Threshold",
                         info="Signals above this get 1.5x position size",
+                        elem_id="config-high-conviction",
                     )
 
                     threshold_apply_btn = gr.Button(
                         "Apply Threshold",
                         variant="primary",
+                        elem_id="config-apply-threshold-btn",
                     )
 
                     threshold_status = gr.Textbox(
                         label="Status",
                         value="",
                         interactive=False,
+                        elem_id="config-threshold-status",
                     )
 
                 with gr.Column():
@@ -582,6 +594,7 @@ def create_config_tab() -> None:  # noqa: PLR0915
                     reset_btn = gr.Button(
                         "Reset All to Defaults",
                         variant="secondary",
+                        elem_id="config-reset-btn",
                     )
 
             threshold_apply_btn.click(

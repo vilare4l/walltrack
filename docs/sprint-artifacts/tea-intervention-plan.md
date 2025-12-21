@@ -11,7 +11,7 @@
 | Point | Timing | Workflow | Objectif | Status |
 |-------|--------|----------|----------|--------|
 | **1** | Sprint 0 / Epic 1 | `*test-design` | Architecture de testabilité | ✅ FAIT |
-| **2** | Après Epic 6 | `*framework` | Setup Playwright + fixtures Gradio | ⏳ À venir |
+| **2** | Après Epic 6 | `*framework` | Setup Playwright + fixtures Gradio | ✅ FAIT |
 | **3** | Après Epic 8 | `*automate` + `*trace` | Suite E2E complète + quality gate | ⏳ À venir |
 
 ---
@@ -50,28 +50,47 @@
 
 ---
 
-## Point 2 : Framework Setup (APRÈS EPIC 6)
+## Point 2 : Framework Setup (COMPLÉTÉ)
 
-**Trigger:** Quand le dashboard Gradio est fonctionnel
+**Date:** 2025-12-21
 
-### Objectifs
+### Livrables
 
-- [ ] Installer Playwright pour Python
-- [ ] Configurer les fixtures Gradio (browser, page)
-- [ ] Créer les premiers tests E2E du dashboard
-- [ ] Valider que tous les `elem_id` sont en place
+- [x] `pytest-playwright>=0.5.0` ajouté à pyproject.toml
+- [x] Chromium installé via `playwright install`
+- [x] `tests/e2e/conftest.py` - Fixtures Playwright pour Gradio
+- [x] `tests/e2e/gradio/test_dashboard.py` - Tests E2E initiaux
+- [x] `tests/e2e/README.md` - Documentation des tests E2E
+- [x] `elem_id` ajoutés aux composants Gradio critiques
 
-### Workflow à Exécuter
+### Composants Instrumentés (elem_id)
 
+| Fichier | Éléments |
+|---------|----------|
+| `dashboard.py` | main-tabs, tab-status/wallets/clusters/signals/positions/performance/config |
+| `config_panel.py` | config-wallet-weight, config-cluster-weight, config-token-weight, config-context-weight, config-apply-weights-btn, config-normalize-btn, config-reset-btn, config-trade-threshold, config-high-conviction |
+| `wallets.py` | wallets-table, wallets-refresh-btn, wallets-status-filter, wallets-min-score, wallets-new-address, wallets-add-btn, wallets-blacklist-btn |
+| `positions.py` | positions-table, positions-refresh-btn, positions-id-input, history-table, history-date-from, history-date-to, history-pnl-filter, history-search-btn |
+
+### Tests E2E Créés
+
+| Classe | Tests |
+|--------|-------|
+| `TestDashboardLoads` | title_visible, subtitle_visible, main_tabs_visible |
+| `TestTabNavigation` | navigate_to_wallets, navigate_to_config, navigate_to_positions, tab_round_trip |
+| `TestWalletsTab` | table_exists, filter_options, add_wallet_input |
+| `TestConfigTab` | weight_sliders, threshold_sliders, reset_button |
+| `TestPositionsTab` | table_exists, trade_history_tab, history_filters |
+
+### Commandes
+
+```bash
+# Lancer les tests E2E (nécessite dashboard actif sur :7865)
+uv run pytest tests/e2e -m e2e
+
+# Mode visuel
+HEADED=1 uv run pytest tests/e2e -m e2e
 ```
-*framework
-```
-
-### Prérequis
-
-- Dashboard Gradio déployé localement
-- Tous les composants interactifs ont `elem_id`
-- Epic 6 (Feedback Loop) complété
 
 ---
 
@@ -125,6 +144,12 @@ uv run pytest -m unit
 
 # Tests avec coverage
 uv run pytest --cov=walltrack --cov-fail-under=80
+
+# Tests E2E (nécessite dashboard actif)
+uv run pytest tests/e2e -m e2e
+
+# Tests E2E mode visuel
+HEADED=1 uv run pytest tests/e2e -m e2e
 
 # Type checking
 uv run mypy src/walltrack --strict
