@@ -162,4 +162,5 @@ ignore_missing_imports = true
 [dependency-groups]
 dev = [
     "pandas-stubs>=2.3.3.251201",
+    "pytest-mock>=3.15.1",
 ]

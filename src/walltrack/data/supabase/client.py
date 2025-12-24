@@ -100,6 +100,33 @@ class SupabaseClient:
         response = await query.execute()
         return list(response.data) if response.data else []
 
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=4),
+        retry=retry_if_exception_type(Exception),
+    )
+    async def update(
+        self,
+        table: str,
+        filters: dict[str, Any],
+        data: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Update data with retry logic.
+
+        Args:
+            table: Table name to update
+            filters: Dictionary of column=value pairs for WHERE clause
+            data: Dictionary of column=value pairs to update
+
+        Returns:
+            Updated record as dictionary
+        """
+        query = self.table(table).update(data)
+        for key, value in filters.items():
+            query = query.eq(key, value)
+        response = await query.execute()
+        return response.data[0] if response.data else {}
+
     async def health_check(self) -> dict[str, Any]:
         """Check Supabase connection health."""
         try:

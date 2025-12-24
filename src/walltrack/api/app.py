@@ -11,6 +11,7 @@ from walltrack.api.middleware.hmac_validation import HMACValidationMiddleware
 from walltrack.api.routes import clusters, config, health, risk, signals, trades, wallets, webhooks
 from walltrack.config.logging import configure_logging
 from walltrack.config.settings import get_settings
+from walltrack.core.simulation.context import get_execution_mode, initialize_execution_mode
 from walltrack.data.neo4j.client import close_neo4j_client, get_neo4j_client
 from walltrack.data.supabase.client import close_supabase_client, get_supabase_client
 
@@ -23,6 +24,11 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     # Startup
     log.info("application_starting")
     configure_logging()
+
+    # Initialize execution mode
+    initialize_execution_mode()
+    mode = get_execution_mode()
+    log.info("execution_mode_initialized", mode=mode.value)
 
     # Connect to databases
     try:

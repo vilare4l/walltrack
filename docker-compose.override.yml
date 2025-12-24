@@ -2,11 +2,12 @@
 # WallTrack - Docker Compose Override for LocalAI Stack Integration
 # =============================================================================
 #
-# This file connects WallTrack to the external localai_default network
+# This file connects WallTrack to the external localai network
 # where shared infrastructure services are running:
-#   - Neo4j (localai-neo4j-1) - Graph database for clusters
-#   - PostgreSQL (localai-postgres-1) - Via Supabase for transactional data
-#   - Redis (localai-redis-1) - Optional job queue
+#   - Neo4j (neo4j-walltrack) - Graph database for clusters
+#   - PostgreSQL (supabase-db) - Direct DB access
+#   - Supabase API (supabase-kong) - REST API on port 8000
+#   - Redis (redis) - Optional job queue
 #   - MinIO (localai-minio-1) - Optional S3 storage
 #
 # Usage:
@@ -24,30 +25,56 @@ services:
   walltrack:
     networks:
       - walltrack_network
-      - localai_default    # Connect to shared infrastructure
+      - localai    # Connect to shared infrastructure
 
     environment:
-      # Neo4j - use container name (internal port 7687)
-      - NEO4J_URI=bolt://localai-neo4j-1:7687
+      # Neo4j - use dedicated WallTrack Neo4j container
+      - NEO4J_URI=bolt://neo4j-walltrack:7687
       - NEO4J_USER=neo4j
-      - NEO4J_PASSWORD=neo4jpass
-      # Dedicated Neo4j database for WallTrack
-      - NEO4J_DATABASE=walltrack
+      - NEO4J_PASSWORD=walltrackpass
+      - NEO4J_DATABASE=neo4j
 
-      # PostgreSQL/Supabase - use container name
-      # Port 5432 for direct connection, or use Supabase API
-      - DATABASE_URL=postgresql://postgres:postgres@localai-postgres-1:5432/postgres
-      # Dedicated PostgreSQL schema for WallTrack
+      # Supabase REST API - via Kong gateway
+      - SUPABASE_URL=http://supabase-kong:8000
+      # PostgreSQL direct - via supabase-db container
+      - DATABASE_URL=postgresql://postgres:postgres@supabase-db:5432/postgres
       - POSTGRES_SCHEMA=walltrack
 
       # Redis - use container name (internal port 6379)
-      - REDIS_HOST=localai-redis-1
+      - REDIS_HOST=redis
       - REDIS_PORT=6379
 
       # MinIO - use container name (internal port 9000)
       - STORAGE_ENDPOINT=http://localai-minio-1:9000
-      # Public endpoint for URL generation (external access)
       - STORAGE_PUBLIC_ENDPOINT=http://localhost:9010
+
+  # ========================================
+  # WallTrack Dashboard - Network Override
+  # ========================================
+  walltrack-dashboard:
+    networks:
+      - walltrack_network
+      - localai    # Connect to shared infrastructure
+
+    environment:
+      # API URL for dashboard to call health checks
+      - API_BASE_URL=http://walltrack-app:8000
+
+      # Neo4j - use dedicated WallTrack Neo4j container
+      - NEO4J_URI=bolt://neo4j-walltrack:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=walltrackpass
+      - NEO4J_DATABASE=neo4j
+
+      # Supabase REST API - via Kong gateway
+      - SUPABASE_URL=http://supabase-kong:8000
+      # PostgreSQL direct - via supabase-db container
+      - DATABASE_URL=postgresql://postgres:postgres@supabase-db:5432/postgres
+      - POSTGRES_SCHEMA=walltrack
+
+      # Redis - use container name
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
 
   # ========================================
   # Position Monitor - Network Override
@@ -55,29 +82,29 @@ services:
   walltrack-monitor:
     networks:
       - walltrack_network
-      - localai_default    # Connect to shared infrastructure
+      - localai    # Connect to shared infrastructure
 
     environment:
-      # Neo4j - use container name
-      - NEO4J_URI=bolt://localai-neo4j-1:7687
+      # Neo4j - use dedicated WallTrack Neo4j container
+      - NEO4J_URI=bolt://neo4j-walltrack:7687
       - NEO4J_USER=neo4j
-      - NEO4J_PASSWORD=neo4jpass
-      # Dedicated Neo4j database for WallTrack
-      - NEO4J_DATABASE=walltrack
+      - NEO4J_PASSWORD=walltrackpass
+      - NEO4J_DATABASE=neo4j
 
-      # PostgreSQL - use container name
-      - DATABASE_URL=postgresql://postgres:postgres@localai-postgres-1:5432/postgres
-      # Dedicated PostgreSQL schema for WallTrack
+      # Supabase REST API - via Kong gateway
+      - SUPABASE_URL=http://supabase-kong:8000
+      # PostgreSQL direct - via supabase-db container
+      - DATABASE_URL=postgresql://postgres:postgres@supabase-db:5432/postgres
       - POSTGRES_SCHEMA=walltrack
 
       # Redis - use container name
-      - REDIS_HOST=localai-redis-1
+      - REDIS_HOST=redis
       - REDIS_PORT=6379
 
 # ========================================
 # External Network Declaration
 # ========================================
 networks:
-  localai_default:
+  localai:
     external: true
-    name: localai_default
+    name: localai

@@ -12,12 +12,15 @@ from walltrack.config.settings import get_settings
 async def fetch_system_status() -> dict[str, Any]:
     """Fetch system health status from API."""
     settings = get_settings()
+    # Use api_base_url if set, otherwise fall back to localhost:port
+    base_url = settings.api_base_url or f"http://localhost:{settings.port}"
     async with httpx.AsyncClient(
-        base_url=f"http://localhost:{settings.port}",
+        base_url=base_url,
         timeout=5.0,
     ) as client:
         try:
-            response = await client.get("/health")
+            # Use detailed health check for service status
+            response = await client.get("/health/detailed")
             response.raise_for_status()
             result: dict[str, Any] = response.json()
             return result
@@ -33,24 +36,33 @@ def format_status(status: dict[str, Any]) -> str:
     """Format status for display."""
     overall = status.get("status", "unknown")
     if overall == "healthy":
-        indicator = "[OK]"
+        indicator = "✅"
     elif overall == "error":
-        indicator = "[ERROR]"
+        indicator = "❌"
     else:
-        indicator = "[WARN]"
+        indicator = "⚠️"
 
-    services = status.get("services", {})
-    neo4j_status = (
-        "Connected" if services.get("neo4j") == "connected" else "Disconnected"
-    )
-    supabase_status = (
-        "Connected" if services.get("supabase") == "connected" else "Disconnected"
-    )
+    # Parse components from detailed health check
+    components = status.get("components", {})
+    neo4j_info = components.get("neo4j", {})
+    supabase_info = components.get("supabase", {})
+
+    neo4j_healthy = neo4j_info.get("healthy", False)
+    supabase_healthy = supabase_info.get("healthy", False)
+
+    neo4j_status = "✅ Connected" if neo4j_healthy else "❌ Disconnected"
+    supabase_status = "✅ Connected" if supabase_healthy else "❌ Disconnected"
+
+    # Execution mode
+    exec_mode = status.get("execution_mode", "unknown").upper()
+    mode_emoji = "🧪" if exec_mode == "SIMULATION" else "🔴"
 
     return f"""
-# System Status
+# System Status {indicator}
 
-**Overall:** {indicator} {overall.upper()}
+**Overall:** {overall.upper()}
+
+**Execution Mode:** {mode_emoji} {exec_mode}
 
 **Last Check:** {status.get('timestamp', 'N/A')}
 
@@ -62,7 +74,7 @@ def format_status(status: dict[str, Any]) -> str:
 |---------|--------|
 | Neo4j | {neo4j_status} |
 | Supabase | {supabase_status} |
-| API | Running |
+| API | ✅ Running |
 
 ---
 

@@ -114,6 +114,9 @@ class Position(BaseModel):
     exit_price: float | None = Field(default=None)
     exit_tx_signatures: list[str] = Field(default_factory=list)
 
+    # Simulation flag
+    simulated: bool = Field(default=False, description="True if position is simulated")
+
     # Tracking
     last_price_check: datetime | None = Field(default=None)
     peak_price: float | None = Field(default=None)  # For trailing stop
@@ -135,6 +138,12 @@ class Position(BaseModel):
         if self.peak_price:
             return self.peak_price > self.entry_price
         return False
+
+    @computed_field
+    @property
+    def is_simulated(self) -> bool:
+        """Check if position is simulated."""
+        return self.simulated
 
 
 class ExitExecution(BaseModel):

@@ -1,10 +1,18 @@
 """Application settings using pydantic-settings."""
 
+from enum import Enum
 from functools import lru_cache
 from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class ExecutionMode(str, Enum):
+    """Trading execution mode."""
+
+    LIVE = "live"
+    SIMULATION = "simulation"
 
 
 class Settings(BaseSettings):
@@ -20,6 +28,18 @@ class Settings(BaseSettings):
     # Application
     env: Literal["development", "staging", "production"] = "development"
     debug: bool = Field(default=False, description="Enable debug mode")
+
+    # Execution Mode
+    execution_mode: ExecutionMode = Field(
+        default=ExecutionMode.SIMULATION,
+        description="Trading execution mode (live/simulation)",
+    )
+    simulation_slippage_bps: int = Field(
+        default=100,
+        ge=0,
+        le=500,
+        description="Simulated slippage in basis points (100 = 1%)",
+    )
     host: str = Field(default="0.0.0.0", description="Server host")
     port: int = Field(default=8000, ge=1, le=65535, description="Server port")
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = Field(
@@ -213,6 +233,10 @@ class Settings(BaseSettings):
     ui_port: int = Field(default=7860, ge=1024, le=65535)
     ui_host: str = Field(default="0.0.0.0")
     ui_share: bool = Field(default=False)
+    api_base_url: str = Field(
+        default="",
+        description="API base URL for dashboard (leave empty for localhost:port)",
+    )
 
     # Optional Services
     discord_webhook_url: str = Field(default="")

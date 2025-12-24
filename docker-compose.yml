@@ -12,7 +12,7 @@
 
 services:
   # ========================================
-  # WallTrack Main Application
+  # WallTrack API (FastAPI)
   # ========================================
   walltrack:
     build:
@@ -22,8 +22,7 @@ services:
     container_name: walltrack-app
 
     ports:
-      - "${PORT:-8000}:8000"      # FastAPI
-      - "${UI_PORT:-7860}:7860"   # Gradio Dashboard
+      - "${PORT:-8080}:8000"      # FastAPI API
 
     env_file: .env
 
@@ -43,6 +42,40 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+    restart: unless-stopped
+
+    networks:
+      - walltrack_network
+
+  # ========================================
+  # WallTrack Dashboard (Gradio)
+  # ========================================
+  walltrack-dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: walltrack-dashboard
+
+    command: ["uv", "run", "python", "-c", "from walltrack.ui.dashboard import launch_dashboard; launch_dashboard()"]
+
+    ports:
+      - "${UI_PORT:-7865}:7860"   # Gradio Dashboard
+
+    env_file: .env
+
+    environment:
+      - PYTHONPATH=/app/src
+      - PYTHONUNBUFFERED=1
+
+    volumes:
+      - ./src:/app/src:ro
+      - walltrack_logs:/app/logs
+
+    depends_on:
+      walltrack:
+        condition: service_healthy
 
     restart: unless-stopped
 
