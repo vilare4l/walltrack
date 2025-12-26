@@ -8,7 +8,6 @@ from walltrack.core.simulation.context import get_execution_mode
 from walltrack.ui.components.clusters import create_clusters_tab
 from walltrack.ui.components.config_panel import create_config_tab
 from walltrack.ui.components.discovery import create_discovery_tab
-from walltrack.ui.components.performance import create_performance_tab
 from walltrack.ui.components.positions import create_positions_tab
 from walltrack.ui.components.sidebar import create_sidebar_state, update_sidebar_content
 from walltrack.ui.components.signals import create_signals_tab
@@ -230,9 +229,6 @@ def create_legacy_dashboard() -> gr.Blocks:
 
             with gr.Tab("Positions", id="positions", elem_id="tab-positions"):
                 create_positions_tab()
-
-            with gr.Tab("Performance", id="performance", elem_id="tab-performance"):
-                create_performance_tab()
 
             with gr.Tab("Discovery", id="discovery", elem_id="tab-discovery"):
                 create_discovery_tab()

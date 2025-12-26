@@ -1,1 +1,0 @@
-"""Backtest UI component."""
