@@ -2,7 +2,7 @@
 
 import asyncio
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from statistics import mean
 from typing import Any
 
@@ -59,7 +59,7 @@ class WalletProfiler:
         if (
             not force_update
             and wallet.last_profiled_at
-            and (datetime.utcnow() - wallet.last_profiled_at) < timedelta(hours=24)
+            and (datetime.now(UTC) - wallet.last_profiled_at) < timedelta(hours=24)
         ):
             log.info(
                 "profile_recent",
@@ -69,7 +69,7 @@ class WalletProfiler:
             return wallet
 
         # Fetch historical trades
-        start_time = datetime.utcnow() - timedelta(days=lookback_days)
+        start_time = datetime.now(UTC) - timedelta(days=lookback_days)
         trades = await self._fetch_wallet_trades(address, start_time)
 
         # Calculate profile metrics
@@ -90,7 +90,7 @@ class WalletProfiler:
 
         # Calculate initial score based on profile
         wallet.score = self._calculate_initial_score(profile)
-        wallet.last_profiled_at = datetime.utcnow()
+        wallet.last_profiled_at = datetime.now(UTC)
 
         # Save to database
         if await self.wallet_repo.exists(address):
@@ -162,12 +162,13 @@ class WalletProfiler:
         tx: dict[str, Any],
         positions: dict[str, dict[str, Any]],
     ) -> dict[str, Any] | None:
-        """Parse a swap transaction into trade data."""
-        token_in = tx.get("tokenIn", {})
-        token_out = tx.get("tokenOut", {})
-        timestamp = tx.get("timestamp")
+        """Parse a swap transaction into trade data.
 
-        if not all([token_in, token_out, timestamp]):
+        Handles complex multi-hop DeFi swaps by calculating net SOL change.
+        For aggregated swaps, tracks the total SOL spent vs SOL received.
+        """
+        timestamp = tx.get("timestamp")
+        if not timestamp:
             return None
 
         # Convert timestamp to datetime if needed
@@ -176,7 +177,136 @@ class WalletProfiler:
         elif isinstance(timestamp, str):
             timestamp = datetime.fromisoformat(timestamp)
 
-        # Determine if buy or sell (SOL -> token = buy, token -> SOL = sell)
+        sol_mint = "So11111111111111111111111111111111111111112"
+        fee_payer = tx.get("feePayer")
+
+        if not fee_payer:
+            return None
+
+        # Try legacy format first (tokenIn/tokenOut)
+        token_in = tx.get("tokenIn", {})
+        token_out = tx.get("tokenOut", {})
+
+        if token_in and token_out:
+            return self._parse_legacy_swap(token_in, token_out, timestamp, positions)
+
+        # Parse Helius format: calculate net SOL change from all transfers
+        token_transfers = tx.get("tokenTransfers", [])
+        native_transfers = tx.get("nativeTransfers", [])
+
+        if not token_transfers:
+            return None
+
+        # Calculate net SOL from wrapped SOL transfers
+        sol_received = 0.0
+        sol_sent = 0.0
+
+        for tt in token_transfers:
+            if tt.get("mint") == sol_mint:
+                amount = tt.get("tokenAmount", 0)
+                if tt.get("toUserAccount") == fee_payer:
+                    sol_received += amount
+                elif tt.get("fromUserAccount") == fee_payer:
+                    sol_sent += amount
+
+        # Also check native SOL transfers
+        for nt in native_transfers:
+            amount = nt.get("amount", 0) / 1e9  # lamports to SOL
+            if nt.get("toUserAccount") == fee_payer:
+                sol_received += amount
+            elif nt.get("fromUserAccount") == fee_payer:
+                sol_sent += amount
+
+        # Skip if no SOL movement detected
+        if sol_received == 0 and sol_sent == 0:
+            return None
+
+        # Find the primary non-SOL token involved
+        primary_token = None
+        token_amount = 0.0
+
+        for tt in token_transfers:
+            token_mint = tt.get("mint")
+            if token_mint == sol_mint:
+                continue
+
+            # Token received by wallet
+            if tt.get("toUserAccount") == fee_payer:
+                primary_token = token_mint
+                token_amount = tt.get("tokenAmount", 0)
+                break
+            # Token sent by wallet
+            elif tt.get("fromUserAccount") == fee_payer:
+                primary_token = token_mint
+                token_amount = tt.get("tokenAmount", 0)
+
+        # Calculate net PnL for this swap
+        net_sol = sol_received - sol_sent
+
+        # Determine trade type based on net SOL flow
+        if sol_sent > sol_received:
+            # Net SOL outflow = buying tokens
+            trade_type = "buy"
+            if primary_token:
+                if primary_token not in positions:
+                    positions[primary_token] = {
+                        "entry_sol": sol_sent,
+                        "entry_time": timestamp,
+                        "tokens": token_amount,
+                    }
+                else:
+                    positions[primary_token]["entry_sol"] += sol_sent
+                    positions[primary_token]["tokens"] += token_amount
+
+            return {
+                "type": trade_type,
+                "token": primary_token,
+                "amount_sol": sol_sent,
+                "amount_token": token_amount,
+                "timestamp": timestamp,
+                "pnl": None,  # PnL calculated on sell
+            }
+        else:
+            # Net SOL inflow = selling tokens or profitable round-trip
+            trade_type = "sell"
+            pnl = None
+            is_win = None
+
+            # Check if this is a complete round-trip (buy and sell in same tx)
+            # This happens with arbitrage/aggregator trades
+            if sol_sent > 0 and sol_received > 0:
+                # Round-trip: PnL is net SOL
+                pnl = net_sol
+                is_win = pnl > 0
+            elif primary_token and primary_token in positions:
+                # Normal sell from existing position
+                entry_sol = positions[primary_token]["entry_sol"]
+                if entry_sol > 0:
+                    pnl = sol_received - entry_sol
+                    is_win = pnl > 0
+                    positions[primary_token]["entry_sol"] = max(0, entry_sol - sol_received)
+                    positions[primary_token]["tokens"] = max(
+                        0, positions[primary_token]["tokens"] - token_amount
+                    )
+
+            return {
+                "type": trade_type,
+                "token": primary_token,
+                "amount_sol": sol_received,
+                "amount_token": token_amount,
+                "timestamp": timestamp,
+                "pnl": pnl,
+                "is_win": is_win,
+            }
+
+    def _parse_legacy_swap(
+        self,
+        token_in: dict[str, Any],
+        token_out: dict[str, Any],
+        timestamp: datetime,
+        positions: dict[str, dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        """Parse legacy swap format with tokenIn/tokenOut."""
         sol_mint = "So11111111111111111111111111111111111111112"
 
         if token_in.get("mint") == sol_mint:
@@ -185,7 +315,6 @@ class WalletProfiler:
             amount_sol = float(token_in.get("amount", 0))
             amount_token = float(token_out.get("amount", 0))
 
-            # Track position
             if token_mint not in positions:
                 positions[token_mint] = {
                     "entry_sol": amount_sol,
@@ -193,7 +322,6 @@ class WalletProfiler:
                     "tokens": amount_token,
                 }
             else:
-                # Add to existing position
                 positions[token_mint]["entry_sol"] += amount_sol
                 positions[token_mint]["tokens"] += amount_token
 
@@ -203,7 +331,7 @@ class WalletProfiler:
                 "amount_sol": amount_sol,
                 "amount_token": amount_token,
                 "timestamp": timestamp,
-                "pnl": None,  # Not calculated for buys
+                "pnl": None,
             }
 
         elif token_out.get("mint") == sol_mint:
@@ -212,7 +340,6 @@ class WalletProfiler:
             amount_sol = float(token_out.get("amount", 0))
             amount_token = float(token_in.get("amount", 0))
 
-            # Calculate PnL if we have entry data
             pnl = None
             is_win = None
 
@@ -221,7 +348,6 @@ class WalletProfiler:
                 pnl = amount_sol - entry_sol
                 is_win = pnl > 0
 
-                # Clear or reduce position
                 positions[token_mint]["entry_sol"] = max(0, entry_sol - amount_sol)
                 positions[token_mint]["tokens"] -= amount_token
 
@@ -352,5 +478,5 @@ class WalletProfiler:
             return True
 
         # Profile is stale
-        stale_threshold = datetime.utcnow() - timedelta(hours=stale_hours)
+        stale_threshold = datetime.now(UTC) - timedelta(hours=stale_hours)
         return wallet.last_profiled_at < stale_threshold

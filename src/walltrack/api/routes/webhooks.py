@@ -5,10 +5,13 @@ from typing import Any
 
 import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from pydantic import BaseModel, Field
 
+from walltrack.config.settings import Settings, get_settings
 from walltrack.constants.webhook import MAX_PROCESSING_TIME_MS
 from walltrack.data.supabase.client import SupabaseClient, get_supabase_client
 from walltrack.data.supabase.repositories.webhook_repo import WebhookRepository
+from walltrack.services.helius.client import HeliusClient, get_helius_client
 from walltrack.services.helius.models import (
     ParsedSwapEvent,
     WebhookHealthStatus,
@@ -18,6 +21,44 @@ from walltrack.services.helius.webhook_manager import WebhookParser, get_webhook
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(tags=["webhooks"])
+
+
+# ============ Models ============
+
+class WebhookCreateRequest(BaseModel):
+    """Request to create a webhook."""
+
+    webhook_url: str = Field(..., description="Public URL to receive webhook notifications")
+    wallet_addresses: list[str] = Field(
+        default_factory=list,
+        description="Wallet addresses to monitor (empty = sync from tracked wallets)",
+    )
+    transaction_types: list[str] = Field(
+        default=["SWAP"],
+        description="Transaction types to monitor",
+    )
+
+
+class WebhookSyncRequest(BaseModel):
+    """Request to sync webhook with tracked wallets."""
+
+    webhook_id: str = Field(..., description="Helius webhook ID to sync")
+
+
+class WebhookResponse(BaseModel):
+    """Webhook response."""
+
+    webhook_id: str
+    webhook_url: str
+    wallet_count: int
+    transaction_types: list[str]
+
+
+class WebhookListResponse(BaseModel):
+    """List of webhooks."""
+
+    webhooks: list[dict[str, Any]]
+    total: int
 
 
 async def get_webhook_repo(
@@ -194,3 +235,148 @@ async def webhook_health_check(
             status="degraded",
             helius_connected=False,
         )
+
+
+# ============ Webhook Management Endpoints ============
+
+
+@router.get("/manage", response_model=WebhookListResponse)
+async def list_helius_webhooks(
+    helius: HeliusClient = Depends(get_helius_client),
+) -> WebhookListResponse:
+    """
+    List all Helius webhooks for this API key.
+
+    Returns:
+        List of configured webhooks
+    """
+    try:
+        webhooks = await helius.list_webhooks()
+        return WebhookListResponse(webhooks=webhooks, total=len(webhooks))
+    except Exception as e:
+        logger.error("list_webhooks_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/manage", response_model=WebhookResponse)
+async def create_helius_webhook(
+    request: WebhookCreateRequest,
+    helius: HeliusClient = Depends(get_helius_client),
+    supabase: SupabaseClient = Depends(get_supabase_client),
+) -> WebhookResponse:
+    """
+    Create a new Helius webhook.
+
+    If wallet_addresses is empty, automatically uses all active tracked wallets.
+
+    Args:
+        request: Webhook creation parameters
+
+    Returns:
+        Created webhook details
+    """
+    try:
+        wallet_addresses = request.wallet_addresses
+
+        # If no wallets specified, get all active tracked wallets
+        if not wallet_addresses:
+            from walltrack.data.supabase.repositories.wallet_repo import WalletRepository
+
+            wallet_repo = WalletRepository(supabase)
+            wallets = await wallet_repo.get_active_wallets(limit=1000)
+            wallet_addresses = [w.address for w in wallets]
+
+        if not wallet_addresses:
+            raise HTTPException(
+                status_code=400,
+                detail="No wallets to monitor. Discover wallets first or provide addresses.",
+            )
+
+        result = await helius.create_webhook(
+            webhook_url=request.webhook_url,
+            wallet_addresses=wallet_addresses,
+            transaction_types=request.transaction_types,
+        )
+
+        return WebhookResponse(
+            webhook_id=result.get("webhookID", ""),
+            webhook_url=request.webhook_url,
+            wallet_count=len(wallet_addresses),
+            transaction_types=request.transaction_types,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("create_webhook_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.post("/manage/sync")
+async def sync_webhook_wallets(
+    request: WebhookSyncRequest,
+    helius: HeliusClient = Depends(get_helius_client),
+    supabase: SupabaseClient = Depends(get_supabase_client),
+) -> dict[str, Any]:
+    """
+    Sync a webhook with current tracked wallets.
+
+    Updates the webhook to monitor all active wallets from the database.
+
+    Args:
+        request: Sync request with webhook ID
+
+    Returns:
+        Updated webhook details
+    """
+    try:
+        from walltrack.data.supabase.repositories.wallet_repo import WalletRepository
+
+        wallet_repo = WalletRepository(supabase)
+        wallets = await wallet_repo.get_active_wallets(limit=1000)
+        wallet_addresses = [w.address for w in wallets]
+
+        if not wallet_addresses:
+            raise HTTPException(
+                status_code=400,
+                detail="No active wallets to sync",
+            )
+
+        result = await helius.sync_webhook_wallets(
+            webhook_id=request.webhook_id,
+            wallet_addresses=wallet_addresses,
+        )
+
+        return {
+            "status": "synced",
+            "webhook_id": request.webhook_id,
+            "wallet_count": len(wallet_addresses),
+            "wallets": wallet_addresses[:10],  # First 10 for preview
+            "more": len(wallet_addresses) > 10,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("sync_webhook_failed", error=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@router.delete("/manage/{webhook_id}")
+async def delete_helius_webhook(
+    webhook_id: str,
+    helius: HeliusClient = Depends(get_helius_client),
+) -> dict[str, str]:
+    """
+    Delete a Helius webhook.
+
+    Args:
+        webhook_id: ID of the webhook to delete
+
+    Returns:
+        Deletion confirmation
+    """
+    try:
+        await helius.delete_webhook(webhook_id)
+        return {"status": "deleted", "webhook_id": webhook_id}
+    except Exception as e:
+        logger.error("delete_webhook_failed", webhook_id=webhook_id, error=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e

@@ -317,27 +317,41 @@ class DiscoveryRepository:
 
 ## Implementation Tasks
 
-- [ ] Create discovery_runs database table
-- [ ] Create discovery_run_wallets database table
-- [ ] Create DiscoveryRun and related models
-- [ ] Create DiscoveryRepository
-- [ ] Integrate with existing discovery task
-- [ ] Write unit tests
+- [x] Create discovery_runs database table
+- [x] Create discovery_run_wallets database table
+- [x] Create DiscoveryRun and related models
+- [x] Create DiscoveryRepository
+- [x] Integrate with existing discovery task
+- [x] Write unit tests
 
 ## Definition of Done
 
-- [ ] All discovery runs are persisted to database
-- [ ] Run parameters and results are stored
-- [ ] Discovered wallets are linked to runs
-- [ ] History can be queried by date range
-- [ ] Statistics are calculated correctly
-- [ ] Tests cover CRUD operations
+- [x] All discovery runs are persisted to database
+- [x] Run parameters and results are stored
+- [x] Discovered wallets are linked to runs
+- [x] History can be queried by date range
+- [x] Statistics are calculated correctly
+- [x] Tests cover CRUD operations
+
+## Dev Agent Record
+
+### Implementation Notes (2024-12-24)
+- Created migration file `019_discovery_runs.sql` with tables and indexes
+- Implemented Pydantic models: `DiscoveryRun`, `DiscoveryRunParams`, `DiscoveryRunWallet`, `DiscoveryStats`, `RunStatus`, `TriggerType`
+- Implemented `DiscoveryRepository` with full CRUD operations
+- Integrated repository with `discovery_task.py` - runs now tracked automatically
+- Added 40 unit tests covering models and repository (100% pass)
 
 ## File List
 
 ### New Files
-- `src/walltrack/discovery/models.py` - Discovery run models
-- `src/walltrack/data/supabase/repositories/discovery_repo.py` - Repository
-- `src/walltrack/data/supabase/migrations/019_discovery_runs.sql` - Schema
-- `tests/unit/discovery/test_discovery_models.py` - Model tests
-- `tests/unit/data/test_discovery_repo.py` - Repository tests
+- `src/walltrack/discovery/models.py` - Discovery run models (RunStatus, TriggerType, DiscoveryRun, DiscoveryRunParams, DiscoveryRunWallet, DiscoveryStats)
+- `src/walltrack/data/supabase/repositories/discovery_repo.py` - Repository with CRUD operations
+- `src/walltrack/data/supabase/migrations/019_discovery_runs.sql` - Database schema
+- `tests/unit/discovery/test_discovery_models.py` - 21 model tests
+- `tests/unit/data/test_discovery_repo.py` - 19 repository tests
+
+### Modified Files
+- `src/walltrack/discovery/__init__.py` - Export new models
+- `src/walltrack/data/supabase/repositories/__init__.py` - Export DiscoveryRepository
+- `src/walltrack/scheduler/tasks/discovery_task.py` - Integrate run tracking

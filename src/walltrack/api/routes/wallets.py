@@ -1,5 +1,6 @@
 """Wallet API routes."""
 
+import asyncio
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -16,7 +17,7 @@ from walltrack.data.supabase.repositories.wallet_repo import WalletRepository
 from walltrack.discovery.profiler import WalletProfiler
 from walltrack.discovery.scanner import WalletDiscoveryScanner
 
-router = APIRouter(prefix="/wallets", tags=["wallets"])
+router = APIRouter(tags=["wallets"])
 
 
 class DiscoveryRequest(BaseModel):
@@ -113,6 +114,41 @@ async def profile_single_wallet(
         force_update=force_update,
     )
     return wallet
+
+
+@router.post("/profile-unprofiled", response_model=ProfileResponse)
+async def profile_unprofiled_wallets(
+    repo: Annotated[WalletRepository, Depends(get_wallet_repo)],
+    profiler: Annotated[WalletProfiler, Depends(get_wallet_profiler)],
+    limit: Annotated[int, Query(ge=1, le=50)] = 10,
+) -> ProfileResponse:
+    """
+    Profile wallets that have default score (0.5).
+
+    Useful for profiling wallets discovered before profiling was integrated.
+    Limited to avoid rate limiting issues.
+    """
+    # Get wallets with default score (0.5)
+    wallets = await repo.get_active_wallets(min_score=0.0, limit=100)
+    unprofiled = [w for w in wallets if abs(w.score - 0.5) < 0.01][:limit]
+
+    profiled_wallets: list[Wallet] = []
+    for wallet in unprofiled:
+        try:
+            result = await profiler.profile_wallet(wallet.address, force_update=True)
+            if result:
+                profiled_wallets.append(result)
+            # Rate limit
+            await asyncio.sleep(2.0)
+        except Exception:
+            continue
+
+    return ProfileResponse(
+        profiled=profiled_wallets,
+        total_requested=len(unprofiled),
+        successful=len(profiled_wallets),
+        failed=len(unprofiled) - len(profiled_wallets),
+    )
 
 
 @router.get("", response_model=WalletListResponse)

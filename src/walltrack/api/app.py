@@ -8,12 +8,23 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from walltrack.api.middleware.hmac_validation import HMACValidationMiddleware
-from walltrack.api.routes import clusters, config, health, risk, signals, trades, wallets, webhooks
+from walltrack.api.routes import (
+    clusters,
+    config,
+    discovery,
+    health,
+    risk,
+    signals,
+    trades,
+    wallets,
+    webhooks,
+)
 from walltrack.config.logging import configure_logging
 from walltrack.config.settings import get_settings
 from walltrack.core.simulation.context import get_execution_mode, initialize_execution_mode
 from walltrack.data.neo4j.client import close_neo4j_client, get_neo4j_client
 from walltrack.data.supabase.client import close_supabase_client, get_supabase_client
+from walltrack.scheduler.discovery_scheduler import get_discovery_scheduler
 
 log = structlog.get_logger()
 
@@ -41,12 +52,27 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as e:
         log.warning("supabase_connection_skipped", error=str(e))
 
+    # Start discovery scheduler
+    try:
+        scheduler = await get_discovery_scheduler()
+        await scheduler.start()
+    except Exception as e:
+        log.warning("discovery_scheduler_start_skipped", error=str(e))
+
     log.info("application_started")
 
     yield
 
     # Shutdown
     log.info("application_stopping")
+
+    # Stop discovery scheduler
+    try:
+        scheduler = await get_discovery_scheduler()
+        await scheduler.stop()
+    except Exception as e:
+        log.warning("discovery_scheduler_stop_error", error=str(e))
+
     await close_neo4j_client()
     await close_supabase_client()
     log.info("application_stopped")
@@ -83,5 +109,6 @@ def create_app() -> FastAPI:
     app.include_router(trades.router, prefix="/api/trades")
     app.include_router(config.router, prefix="/api/config")
     app.include_router(risk.router, prefix="/api")
+    app.include_router(discovery.router, prefix="/api")
 
     return app

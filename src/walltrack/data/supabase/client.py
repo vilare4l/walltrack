@@ -89,14 +89,32 @@ class SupabaseClient:
     async def select(
         self,
         table: str,
-        columns: str = "*",
+        columns: str | list[str] = "*",
         filters: dict[str, Any] | None = None,
+        order_by: str | None = None,
+        order_desc: bool = False,
+        limit: int | None = None,
     ) -> list[dict[str, Any]]:
-        """Select data with retry logic."""
-        query = self.table(table).select(columns)
+        """Select data with retry logic.
+
+        Args:
+            table: Table name to select from
+            columns: Columns to select (string or list of strings)
+            filters: Dictionary of column=value pairs for WHERE clause
+            order_by: Column to order by
+            order_desc: If True, order descending
+            limit: Maximum number of rows to return
+        """
+        # Handle columns as list or string
+        cols = ",".join(columns) if isinstance(columns, list) else columns
+        query = self.table(table).select(cols)
         if filters:
             for key, value in filters.items():
                 query = query.eq(key, value)
+        if order_by:
+            query = query.order(order_by, desc=order_desc)
+        if limit:
+            query = query.limit(limit)
         response = await query.execute()
         return list(response.data) if response.data else []
 

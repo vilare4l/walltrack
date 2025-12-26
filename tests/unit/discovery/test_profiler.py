@@ -1,6 +1,6 @@
 """Tests for wallet profiler."""
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -49,11 +49,12 @@ def profiler(
 @pytest.fixture
 def sample_transactions() -> list[dict]:
     """Create sample transaction data."""
-    now = datetime.utcnow()
+    now = datetime.now(UTC)
     return [
         # Buy transaction (SOL -> TOKEN)
         {
             "type": "SWAP",
+            "feePayer": WALLET_1,
             "tokenIn": {"mint": SOL_MINT, "amount": 1.0},
             "tokenOut": {"mint": TOKEN_MINT, "amount": 1000},
             "timestamp": (now - timedelta(hours=5)).timestamp(),
@@ -61,6 +62,7 @@ def sample_transactions() -> list[dict]:
         # Sell transaction (TOKEN -> SOL) - profitable
         {
             "type": "SWAP",
+            "feePayer": WALLET_1,
             "tokenIn": {"mint": TOKEN_MINT, "amount": 1000},
             "tokenOut": {"mint": SOL_MINT, "amount": 2.0},
             "timestamp": (now - timedelta(hours=2)).timestamp(),
@@ -99,7 +101,7 @@ class TestWalletProfiler:
         """Test profiling an existing wallet."""
         existing_wallet = Wallet(
             address=WALLET_1,
-            last_profiled_at=datetime.utcnow() - timedelta(days=2),
+            last_profiled_at=datetime.now(UTC) - timedelta(days=2),
         )
         mock_wallet_repo.get_by_address.return_value = existing_wallet
         mock_wallet_repo.exists.return_value = True
@@ -120,7 +122,7 @@ class TestWalletProfiler:
         """Test that recent profiles are skipped."""
         recent_wallet = Wallet(
             address=WALLET_1,
-            last_profiled_at=datetime.utcnow() - timedelta(hours=12),
+            last_profiled_at=datetime.now(UTC) - timedelta(hours=12),
         )
         mock_wallet_repo.get_by_address.return_value = recent_wallet
 
@@ -141,7 +143,7 @@ class TestWalletProfiler:
         """Test force update ignores recency check."""
         recent_wallet = Wallet(
             address=WALLET_1,
-            last_profiled_at=datetime.utcnow() - timedelta(hours=12),
+            last_profiled_at=datetime.now(UTC) - timedelta(hours=12),
         )
         mock_wallet_repo.get_by_address.return_value = recent_wallet
         mock_wallet_repo.exists.return_value = True
@@ -167,7 +169,7 @@ class TestWalletProfiler:
                 "type": "SWAP",
                 "tokenIn": {"mint": SOL_MINT, "amount": 1.0},
                 "tokenOut": {"mint": TOKEN_MINT, "amount": 1000},
-                "timestamp": datetime.utcnow().timestamp(),
+                "timestamp": datetime.now(UTC).timestamp(),
             }
         ]
 
@@ -238,9 +240,9 @@ class TestProfileCalculations:
     ) -> None:
         """Test win rate calculation."""
         trades = [
-            {"type": "buy", "token": TOKEN_MINT, "amount_sol": 1.0, "timestamp": datetime.utcnow()},
-            {"type": "sell", "token": TOKEN_MINT, "pnl": 0.5, "is_win": True, "timestamp": datetime.utcnow()},
-            {"type": "sell", "token": "D" * 44, "pnl": -0.2, "is_win": False, "timestamp": datetime.utcnow()},
+            {"type": "buy", "token": TOKEN_MINT, "amount_sol": 1.0, "timestamp": datetime.now(UTC)},
+            {"type": "sell", "token": TOKEN_MINT, "pnl": 0.5, "is_win": True, "timestamp": datetime.now(UTC)},
+            {"type": "sell", "token": "D" * 44, "pnl": -0.2, "is_win": False, "timestamp": datetime.now(UTC)},
         ]
 
         profile = await profiler._calculate_profile(trades)
@@ -255,9 +257,9 @@ class TestProfileCalculations:
     ) -> None:
         """Test PnL calculation."""
         trades = [
-            {"type": "sell", "token": TOKEN_MINT, "pnl": 1.0, "is_win": True, "timestamp": datetime.utcnow()},
-            {"type": "sell", "token": "D" * 44, "pnl": 0.5, "is_win": True, "timestamp": datetime.utcnow()},
-            {"type": "sell", "token": "E" * 44, "pnl": -0.3, "is_win": False, "timestamp": datetime.utcnow()},
+            {"type": "sell", "token": TOKEN_MINT, "pnl": 1.0, "is_win": True, "timestamp": datetime.now(UTC)},
+            {"type": "sell", "token": "D" * 44, "pnl": 0.5, "is_win": True, "timestamp": datetime.now(UTC)},
+            {"type": "sell", "token": "E" * 44, "pnl": -0.3, "is_win": False, "timestamp": datetime.now(UTC)},
         ]
 
         profile = await profiler._calculate_profile(trades)
@@ -320,7 +322,7 @@ class TestProfileCalculations:
         """Test _needs_profiling returns True for stale profile."""
         wallet = Wallet(
             address=WALLET_1,
-            last_profiled_at=datetime.utcnow() - timedelta(hours=48),
+            last_profiled_at=datetime.now(UTC) - timedelta(hours=48),
         )
 
         assert profiler._needs_profiling(wallet, stale_hours=24) is True
@@ -332,7 +334,7 @@ class TestProfileCalculations:
         """Test _needs_profiling returns False for recent profile."""
         wallet = Wallet(
             address=WALLET_1,
-            last_profiled_at=datetime.utcnow() - timedelta(hours=12),
+            last_profiled_at=datetime.now(UTC) - timedelta(hours=12),
         )
 
         assert profiler._needs_profiling(wallet, stale_hours=24) is False
@@ -347,9 +349,10 @@ class TestSwapParsing:
     ) -> None:
         """Test parsing a buy swap (SOL -> token)."""
         tx = {
+            "feePayer": WALLET_1,
             "tokenIn": {"mint": SOL_MINT, "amount": 1.5},
             "tokenOut": {"mint": TOKEN_MINT, "amount": 1000},
-            "timestamp": datetime.utcnow().timestamp(),
+            "timestamp": datetime.now(UTC).timestamp(),
         }
         positions: dict = {}
 
@@ -369,14 +372,15 @@ class TestSwapParsing:
         positions = {
             TOKEN_MINT: {
                 "entry_sol": 1.0,
-                "entry_time": datetime.utcnow(),
+                "entry_time": datetime.now(UTC),
                 "tokens": 1000,
             }
         }
         tx = {
+            "feePayer": WALLET_1,
             "tokenIn": {"mint": TOKEN_MINT, "amount": 1000},
             "tokenOut": {"mint": SOL_MINT, "amount": 2.0},
-            "timestamp": datetime.utcnow().timestamp(),
+            "timestamp": datetime.now(UTC).timestamp(),
         }
 
         trade = profiler._parse_swap_transaction(tx, positions)
@@ -395,14 +399,15 @@ class TestSwapParsing:
         positions = {
             TOKEN_MINT: {
                 "entry_sol": 2.0,
-                "entry_time": datetime.utcnow(),
+                "entry_time": datetime.now(UTC),
                 "tokens": 1000,
             }
         }
         tx = {
+            "feePayer": WALLET_1,
             "tokenIn": {"mint": TOKEN_MINT, "amount": 1000},
             "tokenOut": {"mint": SOL_MINT, "amount": 1.0},
-            "timestamp": datetime.utcnow().timestamp(),
+            "timestamp": datetime.now(UTC).timestamp(),
         }
 
         trade = profiler._parse_swap_transaction(tx, positions)

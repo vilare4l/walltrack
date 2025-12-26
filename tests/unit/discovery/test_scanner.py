@@ -1,6 +1,6 @@
 """Tests for wallet discovery scanner."""
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -12,6 +12,44 @@ from walltrack.discovery.scanner import WalletDiscoveryScanner
 WALLET_1 = "A" * 44  # Valid 44-char address
 WALLET_2 = "B" * 44
 TOKEN_MINT = "C" * 44
+
+
+def create_helius_buy_transaction(
+    buyer: str, token_mint: str, amount: float = 1000.0
+) -> dict:
+    """Create a mock Helius BUY transaction (wallet receives tokens)."""
+    return {
+        "feePayer": buyer,
+        "timestamp": datetime.now(UTC).isoformat(),
+        "tokenTransfers": [
+            {
+                "mint": token_mint,
+                "toUserAccount": buyer,
+                "tokenAmount": amount,
+            }
+        ],
+    }
+
+
+def create_helius_sell_transaction(
+    seller: str, token_mint: str, amount: float = 1000.0
+) -> dict:
+    """Create a mock Helius SELL transaction (wallet sends tokens)."""
+    return {
+        "feePayer": seller,
+        "timestamp": datetime.now(UTC).isoformat(),
+        "tokenTransfers": [
+            {
+                "mint": token_mint,
+                "fromUserAccount": seller,
+                "tokenAmount": amount,
+            }
+        ],
+    }
+
+
+# Alias for backwards compatibility
+create_helius_transaction = create_helius_buy_transaction
 
 
 @pytest.fixture
@@ -42,8 +80,8 @@ def mock_helius_client() -> AsyncMock:
     """Mock Helius client."""
     client = AsyncMock()
     client.get_token_transactions.return_value = [
-        {"buyer": WALLET_1, "timestamp": datetime.utcnow(), "amount": 1.0},
-        {"buyer": WALLET_2, "timestamp": datetime.utcnow(), "amount": 2.0},
+        create_helius_transaction(WALLET_1, TOKEN_MINT, 1000.0),
+        create_helius_transaction(WALLET_2, TOKEN_MINT, 2000.0),
     ]
     return client
 
@@ -74,18 +112,16 @@ class TestWalletDiscoveryScanner:
         """Test successful wallet discovery."""
         # Setup sells for profitable exit
         mock_helius_client.get_token_transactions.side_effect = [
-            # First call: early buyers
-            [
-                {"buyer": WALLET_1, "timestamp": datetime.utcnow(), "amount": 1.0},
-            ],
-            # Second call: sells for wallet1
-            [{"amount": 2.0}],  # 100% profit
+            # First call: early buyers (wallet receives tokens)
+            [create_helius_buy_transaction(WALLET_1, TOKEN_MINT, 1000.0)],
+            # Second call: sells for wallet1 (wallet sends tokens at profit)
+            [create_helius_sell_transaction(WALLET_1, TOKEN_MINT, 2000.0)],
         ]
 
         token = TokenLaunch(
             mint=TOKEN_MINT,
             symbol="TEST",
-            launch_time=datetime.utcnow() - timedelta(hours=1),
+            launch_time=datetime.now(UTC) - timedelta(hours=1),
             peak_mcap=1000000,
         )
 
@@ -104,15 +140,15 @@ class TestWalletDiscoveryScanner:
         """Test that unprofitable wallets are filtered out."""
         mock_helius_client.get_token_transactions.side_effect = [
             # Early buyers
-            [{"buyer": WALLET_1, "timestamp": datetime.utcnow(), "amount": 1.0}],
+            [create_helius_buy_transaction(WALLET_1, TOKEN_MINT, 1000.0)],
             # Sells - only 10% profit (below 50% threshold)
-            [{"amount": 1.1}],
+            [create_helius_sell_transaction(WALLET_1, TOKEN_MINT, 1100.0)],
         ]
 
         token = TokenLaunch(
             mint=TOKEN_MINT,
             symbol="TEST",
-            launch_time=datetime.utcnow() - timedelta(hours=1),
+            launch_time=datetime.now(UTC) - timedelta(hours=1),
         )
 
         result = await scanner.discover_from_token(token, min_profit_pct=50.0)
@@ -131,13 +167,13 @@ class TestWalletDiscoveryScanner:
         mock_wallet_repo.upsert.return_value = (MagicMock(spec=Wallet), False)  # Not new
 
         mock_helius_client.get_token_transactions.side_effect = [
-            [{"buyer": WALLET_1, "timestamp": datetime.utcnow(), "amount": 1.0}],
-            [{"amount": 2.0}],
+            [create_helius_buy_transaction(WALLET_1, TOKEN_MINT, 1000.0)],  # Buy
+            [create_helius_sell_transaction(WALLET_1, TOKEN_MINT, 2000.0)],  # 100% profit sell
         ]
 
         token = TokenLaunch(
             mint=TOKEN_MINT,
-            launch_time=datetime.utcnow() - timedelta(hours=1),
+            launch_time=datetime.now(UTC) - timedelta(hours=1),
         )
 
         result = await scanner.discover_from_token(token)
@@ -155,7 +191,7 @@ class TestWalletDiscoveryScanner:
         mock_helius_client.get_token_transactions.return_value = []
 
         tokens = [
-            TokenLaunch(mint="D" * 44 + str(i).zfill(4)[0:4], launch_time=datetime.utcnow())
+            TokenLaunch(mint="D" * 44 + str(i).zfill(4)[0:4], launch_time=datetime.now(UTC))
             for i in range(3)
         ]
 
@@ -174,7 +210,7 @@ class TestWalletDiscoveryScanner:
 
         token = TokenLaunch(
             mint=TOKEN_MINT,
-            launch_time=datetime.utcnow() - timedelta(hours=1),
+            launch_time=datetime.now(UTC) - timedelta(hours=1),
         )
 
         result = await scanner.discover_from_token(token)
@@ -194,7 +230,7 @@ class TestWalletDiscoveryScanner:
 
         token = TokenLaunch(
             mint=TOKEN_MINT,
-            launch_time=datetime.utcnow() - timedelta(hours=1),
+            launch_time=datetime.now(UTC) - timedelta(hours=1),
         )
 
         result = await scanner.discover_from_token(token)
@@ -216,7 +252,7 @@ class TestWalletDiscoveryScanner:
         tokens = [
             TokenLaunch(
                 mint="E" * 40 + str(i).zfill(4),
-                launch_time=datetime.utcnow(),
+                launch_time=datetime.now(UTC),
             )
             for i in range(10)
         ]
@@ -235,13 +271,13 @@ class TestWalletDiscoveryScanner:
     ) -> None:
         """Test that wallets are stored in both Supabase and Neo4j."""
         mock_helius_client.get_token_transactions.side_effect = [
-            [{"buyer": WALLET_1, "timestamp": datetime.utcnow(), "amount": 1.0}],
-            [{"amount": 2.0}],  # 100% profit
+            [create_helius_buy_transaction(WALLET_1, TOKEN_MINT, 1000.0)],  # Buy
+            [create_helius_sell_transaction(WALLET_1, TOKEN_MINT, 2000.0)],  # 100% profit sell
         ]
 
         token = TokenLaunch(
             mint=TOKEN_MINT,
-            launch_time=datetime.utcnow() - timedelta(hours=1),
+            launch_time=datetime.now(UTC) - timedelta(hours=1),
         )
 
         await scanner.discover_from_token(token)

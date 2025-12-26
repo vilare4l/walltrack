@@ -19,6 +19,11 @@ from walltrack.constants.threshold import (
 )
 
 
+def _get_api_base_url() -> str:
+    """Get API base URL from settings."""
+    settings = get_settings()
+    return settings.api_base_url or f"http://localhost:{settings.port}"
+
 def create_weights_chart(
     wallet: float,
     cluster: float,
@@ -131,10 +136,9 @@ async def fetch_current_config() -> dict[str, Any]:
     Returns:
         Current configuration dict
     """
-    settings = get_settings()
     try:
         async with httpx.AsyncClient(
-            base_url=f"http://localhost:{settings.port}",
+            base_url=_get_api_base_url(),
             timeout=5.0,
         ) as client:
             response = await client.get("/api/v1/scoring/config")
@@ -159,10 +163,9 @@ async def fetch_threshold_config() -> dict[str, Any]:
     Returns:
         Current threshold configuration dict
     """
-    settings = get_settings()
     try:
         async with httpx.AsyncClient(
-            base_url=f"http://localhost:{settings.port}",
+            base_url=_get_api_base_url(),
             timeout=5.0,
         ) as client:
             response = await client.get("/api/v1/threshold/config")
@@ -199,10 +202,9 @@ async def update_weights(
     if abs(total - 1.0) > 0.001:
         return f"Error: Weights must sum to 1.0 (current sum: {total:.3f})", None
 
-    settings = get_settings()
     try:
         async with httpx.AsyncClient(
-            base_url=f"http://localhost:{settings.port}",
+            base_url=_get_api_base_url(),
             timeout=5.0,
         ) as client:
             response = await client.put(
@@ -242,10 +244,9 @@ async def update_threshold(
     if high_conviction <= trade_threshold:
         return "Error: High conviction threshold must be > trade threshold"
 
-    settings = get_settings()
     try:
         async with httpx.AsyncClient(
-            base_url=f"http://localhost:{settings.port}",
+            base_url=_get_api_base_url(),
             timeout=5.0,
         ) as client:
             response = await client.put(
@@ -274,10 +275,9 @@ async def reset_to_defaults() -> tuple[
     Returns:
         Tuple of default values and status
     """
-    settings = get_settings()
     try:
         async with httpx.AsyncClient(
-            base_url=f"http://localhost:{settings.port}",
+            base_url=_get_api_base_url(),
             timeout=5.0,
         ) as client:
             await client.post("/api/v1/scoring/config/reset")
@@ -388,10 +388,9 @@ async def fetch_recent_signals() -> list[list[str]]:
     Returns:
         List of signal rows for display
     """
-    settings = get_settings()
     try:
         async with httpx.AsyncClient(
-            base_url=f"http://localhost:{settings.port}",
+            base_url=_get_api_base_url(),
             timeout=5.0,
         ) as client:
             response = await client.get(

@@ -8,6 +8,27 @@ from uuid import uuid4
 import pytest
 
 
+def create_chainable_mock(return_data: list | None = None) -> MagicMock:
+    """Create a mock that supports Supabase method chaining."""
+    mock = MagicMock()
+
+    # Create response object
+    response = MagicMock()
+    response.data = return_data or []
+
+    # Make execute() async and return response
+    mock.execute = AsyncMock(return_value=response)
+
+    # Make all chainable methods return self
+    mock.select.return_value = mock
+    mock.eq.return_value = mock
+    mock.gte.return_value = mock
+    mock.lte.return_value = mock
+    mock.order.return_value = mock
+
+    return mock
+
+
 class TestHistoricalDataCollector:
     """Tests for HistoricalDataCollector class."""
 
@@ -17,6 +38,8 @@ class TestHistoricalDataCollector:
         mock = MagicMock()
         mock.insert = AsyncMock(return_value={})
         mock.select = AsyncMock(return_value=[])
+        # Make table() return a chainable mock by default
+        mock.table.return_value = create_chainable_mock()
         return mock
 
 
@@ -132,10 +155,12 @@ class TestGetSignalsForRange(TestHistoricalDataCollector):
                 "actual_traded": False,
             }
         ]
-        mock_supabase.select = AsyncMock(return_value=mock_signals)
+        # Configure chainable mock with signal data
+        mock_supabase.table.return_value = create_chainable_mock(mock_signals)
 
         with patch(
             "walltrack.core.backtest.collector.get_supabase_client",
+            new_callable=AsyncMock,
             return_value=mock_supabase,
         ):
             from walltrack.core.backtest.collector import HistoricalDataCollector
@@ -173,10 +198,12 @@ class TestGetPriceTimeline(TestHistoricalDataCollector):
                 "volume": None,
             }
         ]
-        mock_supabase.select = AsyncMock(return_value=mock_prices)
+        # Configure chainable mock with price data
+        mock_supabase.table.return_value = create_chainable_mock(mock_prices)
 
         with patch(
             "walltrack.core.backtest.collector.get_supabase_client",
+            new_callable=AsyncMock,
             return_value=mock_supabase,
         ):
             from walltrack.core.backtest.collector import HistoricalDataCollector

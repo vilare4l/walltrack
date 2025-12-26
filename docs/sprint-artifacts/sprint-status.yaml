@@ -121,3 +121,35 @@ development_status:
   7-5-dashboard-simulation-mode: review
   7-6-simulation-alerts-logging: review
   epic-7-retrospective: optional
+
+  # Epic 8: Backtesting & Scenarios
+  epic-8: done
+  8-1-historical-data-collector: done
+  8-2-backtest-engine-core: done
+  8-3-scenario-configuration: done
+  8-4-batch-backtest-runner: done
+  8-5-scenario-comparison-metrics: done
+  8-6-parameter-optimization: done
+  8-7-dashboard-backtest-multi-scenarios: done
+  epic-8-retrospective: optional
+
+  # Epic 9: Discovery Management & Scheduling
+  epic-9: done
+  9-1-discovery-runs-history: done
+  9-2-discovery-api-endpoints: done
+  9-3-configurable-scheduler: done
+  9-4-ui-discovery-tab: done
+  9-5-ui-history-stats: done
+  9-6-docker-redeploy: done
+  epic-9-retrospective: optional
+
+  # Epic 10: Dashboard UX Redesign
+  epic-10: in-progress
+  10-1-status-bar-auto-refresh: review
+  10-2-navbar-implementation: review
+  10-3-sidebar-implementation: review
+  10-4-home-page: review
+  10-5-explorer-page-tabs: review
+  10-6-config-page-migration: review
+  10-7-drill-down-integration: review
+  epic-10-retrospective: optional

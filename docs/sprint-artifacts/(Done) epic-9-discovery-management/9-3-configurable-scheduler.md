@@ -311,30 +311,41 @@ async def get_discovery_scheduler() -> DiscoveryScheduler:
 
 ## Implementation Tasks
 
-- [ ] Create discovery_config database table
-- [ ] Implement DiscoveryScheduler class
-- [ ] Add config load/save methods
-- [ ] Implement scheduler loop
-- [ ] Integrate with app startup/shutdown
-- [ ] Update API endpoints to use scheduler
-- [ ] Write tests
+- [x] Create discovery_config database table
+- [x] Implement DiscoveryScheduler class
+- [x] Add config load/save methods
+- [x] Implement scheduler loop
+- [x] Integrate with app startup/shutdown
+- [x] Update API endpoints to use scheduler
+- [x] Write tests
 
 ## Definition of Done
 
-- [ ] Scheduler loads config on startup
-- [ ] Config changes are persisted
-- [ ] Scheduler runs discovery at configured intervals
-- [ ] Enable/disable works correctly
-- [ ] Frequency changes take effect
-- [ ] Tests pass
+- [x] Scheduler loads config on startup
+- [x] Config changes are persisted
+- [x] Scheduler runs discovery at configured intervals
+- [x] Enable/disable works correctly
+- [x] Frequency changes take effect
+- [x] Tests pass
+
+## Dev Agent Record
+
+### Implementation Notes (2024-12-24)
+- Created migration `020_discovery_config.sql` with singleton pattern
+- Implemented `DiscoveryScheduler` class with full lifecycle management
+- Added config persistence via `save_config` method
+- Scheduler loop runs every minute checking for due runs
+- Integrated with FastAPI lifespan (start on startup, stop on shutdown)
+- Updated discovery API endpoints to use scheduler for config
+- Added 21 unit tests (all passing)
 
 ## File List
 
 ### New Files
-- `src/walltrack/scheduler/discovery_scheduler.py` - Scheduler service
+- `src/walltrack/scheduler/discovery_scheduler.py` - Scheduler service with singleton
 - `src/walltrack/data/supabase/migrations/020_discovery_config.sql` - Schema
-- `tests/unit/scheduler/test_discovery_scheduler.py` - Tests
+- `tests/unit/scheduler/test_discovery_scheduler.py` - 21 tests
 
 ### Modified Files
-- `src/walltrack/api/routes/discovery.py` - Use scheduler
-- `src/walltrack/main.py` - Start/stop scheduler
+- `src/walltrack/api/routes/discovery.py` - Use scheduler for config endpoints
+- `src/walltrack/api/app.py` - Start/stop scheduler in lifespan

@@ -29,6 +29,9 @@ services:
     environment:
       - PYTHONPATH=/app/src
       - PYTHONUNBUFFERED=1
+      # Discovery Scheduler
+      - DISCOVERY_SCHEDULER_ENABLED=${DISCOVERY_SCHEDULER_ENABLED:-true}
+      - DISCOVERY_SCHEDULE_HOURS=${DISCOVERY_SCHEDULE_HOURS:-6}
 
     volumes:
       # Development: mount source for hot reload
@@ -68,10 +71,20 @@ services:
     environment:
       - PYTHONPATH=/app/src
       - PYTHONUNBUFFERED=1
+      # Dashboard connects to API container via internal Docker network
+      - API_BASE_URL=http://walltrack-app:8000
 
     volumes:
       - ./src:/app/src:ro
       - walltrack_logs:/app/logs
+
+    # Dashboard health check on Gradio port
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7860/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
     depends_on:
       walltrack:
@@ -116,7 +129,7 @@ services:
 
     container_name: walltrack-monitor
 
-    command: ["python", "-m", "walltrack.scheduler.jobs"]
+    command: ["uv", "run", "python", "-m", "walltrack.scheduler.jobs"]
 
     env_file: .env
 
@@ -127,6 +140,10 @@ services:
     volumes:
       - ./src:/app/src:ro
       - walltrack_logs:/app/logs
+
+    # Disable health check for background worker (no HTTP server)
+    healthcheck:
+      disable: true
 
     depends_on:
       walltrack:

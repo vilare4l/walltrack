@@ -1,10 +1,9 @@
 """Repository for signal logging and queries."""
 
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
-from supabase import AsyncClient
 
 from walltrack.constants.signal_log import MAX_QUERY_RESULTS
 from walltrack.models.signal_log import (
@@ -14,19 +13,22 @@ from walltrack.models.signal_log import (
     SignalStatus,
 )
 
+if TYPE_CHECKING:
+    from walltrack.data.supabase.client import SupabaseClient
+
 logger = structlog.get_logger(__name__)
 
 
 class SignalRepository:
     """Repository for signal logging and queries."""
 
-    def __init__(self, client: AsyncClient):
+    def __init__(self, client: "SupabaseClient"):
         """Initialize repository with Supabase client.
 
         Args:
-            client: Async Supabase client
+            client: SupabaseClient wrapper
         """
-        self.client = client
+        self._supabase_client = client
 
     async def save(self, signal: SignalLogEntry) -> str:
         """Save signal to database.
@@ -64,7 +66,7 @@ class SignalRepository:
             "raw_factors": signal.raw_factors,
         }
 
-        result = await self.client.table("signals").insert(data).execute()
+        result = await self._supabase_client.table("signals").insert(data).execute()
 
         if result.data:
             signal_id = result.data[0]["id"]
@@ -117,7 +119,7 @@ class SignalRepository:
             for s in signals
         ]
 
-        result = await self.client.table("signals").insert(data).execute()
+        result = await self._supabase_client.table("signals").insert(data).execute()
 
         if result.data:
             ids = [r["id"] for r in result.data]
@@ -135,7 +137,7 @@ class SignalRepository:
             Signal entry or None if not found
         """
         result = (
-            await self.client.table("signals")
+            await self._supabase_client.table("signals")
             .select("*")
             .eq("tx_signature", tx_signature)
             .single()
@@ -156,7 +158,7 @@ class SignalRepository:
             Signal entry or None if not found
         """
         result = (
-            await self.client.table("signals")
+            await self._supabase_client.table("signals")
             .select("*")
             .eq("id", signal_id)
             .single()
@@ -176,7 +178,7 @@ class SignalRepository:
         Returns:
             List of matching signals
         """
-        query = self.client.table("signals").select("*")
+        query = self._supabase_client.table("signals").select("*")
 
         # Apply filters
         if filter.start_date:
@@ -229,7 +231,7 @@ class SignalRepository:
 
         # Count total
         total_result = (
-            await self.client.table("signals")
+            await self._supabase_client.table("signals")
             .select("id", count="exact")
             .gte("timestamp", start_date.isoformat())
             .lte("timestamp", end_date.isoformat())
@@ -239,7 +241,7 @@ class SignalRepository:
 
         # Get counts by eligibility
         eligible_result = (
-            await self.client.table("signals")
+            await self._supabase_client.table("signals")
             .select("id", count="exact")
             .eq("eligibility_status", "trade_eligible")
             .gte("timestamp", start_date.isoformat())
@@ -248,7 +250,7 @@ class SignalRepository:
         )
 
         below_result = (
-            await self.client.table("signals")
+            await self._supabase_client.table("signals")
             .select("id", count="exact")
             .eq("eligibility_status", "below_threshold")
             .gte("timestamp", start_date.isoformat())
@@ -257,7 +259,7 @@ class SignalRepository:
         )
 
         filtered_result = (
-            await self.client.table("signals")
+            await self._supabase_client.table("signals")
             .select("id", count="exact")
             .eq("status", SignalStatus.FILTERED_OUT.value)
             .gte("timestamp", start_date.isoformat())
@@ -266,7 +268,7 @@ class SignalRepository:
         )
 
         executed_result = (
-            await self.client.table("signals")
+            await self._supabase_client.table("signals")
             .select("id", count="exact")
             .eq("status", SignalStatus.EXECUTED.value)
             .gte("timestamp", start_date.isoformat())
@@ -278,7 +280,7 @@ class SignalRepository:
         avg_score = None
         avg_processing = None
         try:
-            avg_result = await self.client.rpc(
+            avg_result = await self._supabase_client.client.rpc(
                 "get_signal_averages",
                 {"start_ts": start_date.isoformat(), "end_ts": end_date.isoformat()},
             ).execute()
@@ -310,7 +312,7 @@ class SignalRepository:
             trade_id: UUID of the executed trade
         """
         await (
-            self.client.table("signals")
+            self._supabase_client.table("signals")
             .update(
                 {
                     "trade_id": trade_id,
@@ -339,7 +341,7 @@ class SignalRepository:
             status: New status to set
         """
         await (
-            self.client.table("signals")
+            self._supabase_client.table("signals")
             .update({"status": status.value})
             .eq("tx_signature", tx_signature)
             .execute()

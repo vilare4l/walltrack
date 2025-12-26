@@ -1,6 +1,6 @@
 """Helius API client for Solana blockchain data."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -103,9 +103,11 @@ class HeliusClient:
                     tx_time = tx.get("timestamp")
                     if tx_time:
                         if isinstance(tx_time, (int, float)):
-                            tx_datetime = datetime.fromtimestamp(tx_time)
+                            tx_datetime = datetime.fromtimestamp(tx_time, tz=UTC)
                         else:
                             tx_datetime = datetime.fromisoformat(str(tx_time))
+                            if tx_datetime.tzinfo is None:
+                                tx_datetime = tx_datetime.replace(tzinfo=UTC)
 
                         if start_time and tx_datetime < start_time:
                             continue
@@ -169,9 +171,11 @@ class HeliusClient:
                 tx_time = tx.get("timestamp")
                 if tx_time:
                     if isinstance(tx_time, (int, float)):
-                        tx_datetime = datetime.fromtimestamp(tx_time)
+                        tx_datetime = datetime.fromtimestamp(tx_time, tz=UTC)
                     else:
                         tx_datetime = datetime.fromisoformat(str(tx_time))
+                        if tx_datetime.tzinfo is None:
+                            tx_datetime = tx_datetime.replace(tzinfo=UTC)
 
                     if tx_datetime >= start_time:
                         filtered.append(tx)
@@ -224,6 +228,190 @@ class HeliusClient:
         except Exception as e:
             log.error("helius_health_check_failed", error=str(e))
             return {"status": "error", "healthy": False, "error": str(e)}
+
+    # ============ Webhook Management ============
+
+    async def create_webhook(
+        self,
+        webhook_url: str,
+        wallet_addresses: list[str],
+        webhook_type: str = "enhanced",
+        transaction_types: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """
+        Create a new webhook with Helius to monitor wallet addresses.
+
+        Args:
+            webhook_url: URL to receive webhook notifications
+            wallet_addresses: List of wallet addresses to monitor
+            webhook_type: Type of webhook ("enhanced" or "raw")
+            transaction_types: Filter by transaction types (e.g., ["SWAP"])
+
+        Returns:
+            Webhook creation response with webhook ID
+        """
+        url = f"{self._base_url}/webhooks"
+        params = {"api-key": self._api_key}
+
+        payload: dict[str, Any] = {
+            "webhookURL": webhook_url,
+            "accountAddresses": wallet_addresses,
+            "webhookType": webhook_type,
+            "transactionTypes": transaction_types or ["SWAP"],
+        }
+
+        try:
+            response = await self.client.post(url, params=params, json=payload)
+            response.raise_for_status()
+            result = response.json()
+            log.info(
+                "helius_webhook_created",
+                webhook_id=result.get("webhookID"),
+                wallet_count=len(wallet_addresses),
+            )
+            return result
+        except httpx.HTTPStatusError as e:
+            log.error(
+                "helius_webhook_create_failed",
+                status_code=e.response.status_code,
+                detail=e.response.text,
+            )
+            raise
+
+    async def update_webhook(
+        self,
+        webhook_id: str,
+        wallet_addresses: list[str] | None = None,
+        webhook_url: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Update an existing webhook.
+
+        Args:
+            webhook_id: ID of the webhook to update
+            wallet_addresses: New list of wallet addresses (replaces existing)
+            webhook_url: New webhook URL
+
+        Returns:
+            Updated webhook data
+        """
+        url = f"{self._base_url}/webhooks/{webhook_id}"
+        params = {"api-key": self._api_key}
+
+        payload: dict[str, Any] = {}
+        if wallet_addresses is not None:
+            payload["accountAddresses"] = wallet_addresses
+        if webhook_url is not None:
+            payload["webhookURL"] = webhook_url
+
+        try:
+            response = await self.client.put(url, params=params, json=payload)
+            response.raise_for_status()
+            result = response.json()
+            log.info(
+                "helius_webhook_updated",
+                webhook_id=webhook_id,
+                wallet_count=len(wallet_addresses) if wallet_addresses else "unchanged",
+            )
+            return result
+        except httpx.HTTPStatusError as e:
+            log.error(
+                "helius_webhook_update_failed",
+                webhook_id=webhook_id,
+                status_code=e.response.status_code,
+            )
+            raise
+
+    async def delete_webhook(self, webhook_id: str) -> bool:
+        """
+        Delete a webhook.
+
+        Args:
+            webhook_id: ID of the webhook to delete
+
+        Returns:
+            True if deletion successful
+        """
+        url = f"{self._base_url}/webhooks/{webhook_id}"
+        params = {"api-key": self._api_key}
+
+        try:
+            response = await self.client.delete(url, params=params)
+            response.raise_for_status()
+            log.info("helius_webhook_deleted", webhook_id=webhook_id)
+            return True
+        except httpx.HTTPStatusError as e:
+            log.error(
+                "helius_webhook_delete_failed",
+                webhook_id=webhook_id,
+                status_code=e.response.status_code,
+            )
+            raise
+
+    async def list_webhooks(self) -> list[dict[str, Any]]:
+        """
+        List all webhooks for this API key.
+
+        Returns:
+            List of webhook configurations
+        """
+        url = f"{self._base_url}/webhooks"
+        params = {"api-key": self._api_key}
+
+        try:
+            response = await self.client.get(url, params=params)
+            response.raise_for_status()
+            webhooks = response.json()
+            log.debug("helius_webhooks_listed", count=len(webhooks))
+            return webhooks
+        except httpx.HTTPStatusError as e:
+            log.error(
+                "helius_webhooks_list_failed",
+                status_code=e.response.status_code,
+            )
+            raise
+
+    async def get_webhook(self, webhook_id: str) -> dict[str, Any] | None:
+        """
+        Get a specific webhook by ID.
+
+        Args:
+            webhook_id: ID of the webhook
+
+        Returns:
+            Webhook data or None if not found
+        """
+        url = f"{self._base_url}/webhooks/{webhook_id}"
+        params = {"api-key": self._api_key}
+
+        try:
+            response = await self.client.get(url, params=params)
+            if response.status_code == 404:
+                return None
+            response.raise_for_status()
+            return response.json()
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                return None
+            raise
+
+    async def sync_webhook_wallets(
+        self,
+        webhook_id: str,
+        wallet_addresses: list[str],
+    ) -> dict[str, Any]:
+        """
+        Sync webhook with current list of tracked wallets.
+        Adds new wallets and keeps existing ones.
+
+        Args:
+            webhook_id: ID of the webhook to sync
+            wallet_addresses: Complete list of wallet addresses to monitor
+
+        Returns:
+            Updated webhook data
+        """
+        return await self.update_webhook(webhook_id, wallet_addresses=wallet_addresses)
 
 
 # Singleton instance

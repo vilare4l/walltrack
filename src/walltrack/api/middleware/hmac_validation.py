@@ -56,8 +56,12 @@ class HMACValidationMiddleware(BaseHTTPMiddleware):
         if not request.url.path.startswith("/webhooks"):
             return await call_next(request)
 
-        # Skip validation for health check
+        # Skip validation for health check and management endpoints
         if request.url.path.endswith("/health"):
+            return await call_next(request)
+
+        # Skip validation for webhook management (admin) endpoints
+        if "/manage" in request.url.path:
             return await call_next(request)
 
         validation_result = await self._validate_signature(request)

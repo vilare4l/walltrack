@@ -64,3 +64,35 @@ class SignalContext(BaseModel):
     # Processing metadata
     filter_status: FilterStatus = FilterStatus.PASSED
     filter_time_ms: float = 0.0
+
+
+class ProcessingResult(BaseModel):
+    """Result of full pipeline processing."""
+
+    # Processing outcome
+    passed: bool
+    reason: str = ""
+
+    # Signal identification
+    tx_signature: str | None = None
+    wallet_address: str | None = None
+    token_address: str | None = None
+
+    # Scoring results (None if not scored)
+    score: float | None = None
+    wallet_score: float | None = None
+    token_score: float | None = None
+    cluster_score: float | None = None
+    context_score: float | None = None
+
+    # Threshold result (None if below threshold or not checked)
+    conviction_tier: str | None = None  # "high", "standard", "none"
+    position_multiplier: float | None = None
+
+    # Execution status
+    trade_queued: bool = False
+    signal_id: str | None = None
+
+    # Timing
+    processing_time_ms: float = 0.0
+    processed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))

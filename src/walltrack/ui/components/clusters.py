@@ -1,6 +1,7 @@
 """Cluster visualization component."""
 
 import asyncio
+import os
 from typing import Any
 
 import gradio as gr
@@ -13,10 +14,21 @@ from walltrack.config.settings import get_settings
 log = structlog.get_logger()
 
 
+def _get_api_url() -> str:
+    """Get API base URL from environment or settings."""
+    # Check for Docker environment variable first
+    api_base = os.environ.get("API_BASE_URL")
+    if api_base:
+        return api_base
+
+    # Fall back to settings
+    settings = get_settings()
+    return f"http://{settings.host}:{settings.port}"
+
+
 async def _fetch_clusters() -> list[dict[str, Any]]:
     """Fetch clusters from API."""
-    settings = get_settings()
-    api_url = f"http://{settings.host}:{settings.port}"
+    api_url = _get_api_url()
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -33,8 +45,7 @@ async def _fetch_clusters() -> list[dict[str, Any]]:
 
 async def _fetch_cluster_details(cluster_id: str) -> dict[str, Any] | None:
     """Fetch cluster details."""
-    settings = get_settings()
-    api_url = f"http://{settings.host}:{settings.port}"
+    api_url = _get_api_url()
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -50,8 +61,7 @@ async def _fetch_cluster_details(cluster_id: str) -> dict[str, Any] | None:
 
 async def _run_cluster_discovery() -> str:
     """Run cluster discovery."""
-    settings = get_settings()
-    api_url = f"http://{settings.host}:{settings.port}"
+    api_url = _get_api_url()
 
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
@@ -67,8 +77,7 @@ async def _run_cluster_discovery() -> str:
 
 async def _run_cooccurrence_analysis() -> str:
     """Run co-occurrence analysis."""
-    settings = get_settings()
-    api_url = f"http://{settings.host}:{settings.port}"
+    api_url = _get_api_url()
 
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
@@ -87,8 +96,7 @@ async def _run_cooccurrence_analysis() -> str:
 
 async def _detect_leaders() -> str:
     """Detect leaders for all clusters."""
-    settings = get_settings()
-    api_url = f"http://{settings.host}:{settings.port}"
+    api_url = _get_api_url()
 
     clusters = await _fetch_clusters()
     detected = 0
@@ -111,8 +119,7 @@ async def _detect_leaders() -> str:
 
 async def _update_multipliers() -> str:
     """Update signal multipliers."""
-    settings = get_settings()
-    api_url = f"http://{settings.host}:{settings.port}"
+    api_url = _get_api_url()
 
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:

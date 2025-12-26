@@ -15,11 +15,15 @@ import httpx
 from walltrack.config.settings import get_settings
 
 
+def _get_api_base_url() -> str:
+    """Get API base URL from settings."""
+    settings = get_settings()
+    return settings.api_base_url or f"http://localhost:{settings.port}"
+
 async def fetch_wallet_status() -> dict[str, Any]:
     """Fetch wallet status from API."""
-    settings = get_settings()
     async with httpx.AsyncClient(
-        base_url=f"http://localhost:{settings.port}",
+        base_url=_get_api_base_url(),
         timeout=5.0,
     ) as client:
         try:
@@ -43,9 +47,8 @@ async def fetch_wallet_status() -> dict[str, Any]:
 
 async def fetch_balance(refresh: bool = False) -> dict[str, Any]:
     """Fetch wallet balance from API."""
-    settings = get_settings()
     async with httpx.AsyncClient(
-        base_url=f"http://localhost:{settings.port}",
+        base_url=_get_api_base_url(),
         timeout=10.0,
     ) as client:
         try:
@@ -66,9 +69,8 @@ async def fetch_balance(refresh: bool = False) -> dict[str, Any]:
 
 async def validate_wallet_signing() -> dict[str, Any]:
     """Validate wallet signing capability."""
-    settings = get_settings()
     async with httpx.AsyncClient(
-        base_url=f"http://localhost:{settings.port}",
+        base_url=_get_api_base_url(),
         timeout=10.0,
     ) as client:
         try:
@@ -82,9 +84,8 @@ async def validate_wallet_signing() -> dict[str, Any]:
 
 async def toggle_safe_mode(enabled: bool) -> dict[str, Any]:
     """Toggle safe mode."""
-    settings = get_settings()
     async with httpx.AsyncClient(
-        base_url=f"http://localhost:{settings.port}",
+        base_url=_get_api_base_url(),
         timeout=5.0,
     ) as client:
         try:
@@ -101,9 +102,8 @@ async def toggle_safe_mode(enabled: bool) -> dict[str, Any]:
 
 async def exit_safe_mode_api() -> dict[str, Any]:
     """Attempt to exit safe mode."""
-    settings = get_settings()
     async with httpx.AsyncClient(
-        base_url=f"http://localhost:{settings.port}",
+        base_url=_get_api_base_url(),
         timeout=10.0,
     ) as client:
         try:

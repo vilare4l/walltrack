@@ -15,8 +15,10 @@ log = structlog.get_logger()
 def get_api_client() -> httpx.AsyncClient:
     """Get async HTTP client for API calls."""
     settings = get_settings()
+    # Use api_base_url if set (for Docker), otherwise fall back to localhost:port
+    base_url = settings.api_base_url or f"http://localhost:{settings.port}"
     return httpx.AsyncClient(
-        base_url=f"http://localhost:{settings.port}",
+        base_url=base_url,
         timeout=10.0,
     )
 
@@ -32,7 +34,7 @@ async def fetch_wallets(
         if status_filter and status_filter != "all":
             params["status"] = status_filter
 
-        response = await client.get("/api/wallets/wallets", params=params)
+        response = await client.get("/api/wallets", params=params)
         response.raise_for_status()
         data: dict[str, Any] = response.json()
         wallets: list[dict[str, Any]] = data.get("wallets", [])
@@ -42,7 +44,7 @@ async def fetch_wallets(
 async def fetch_wallet_detail(address: str) -> dict[str, Any] | None:
     """Fetch wallet details from API."""
     async with get_api_client() as client:
-        response = await client.get(f"/wallets/{address}")
+        response = await client.get(f"/api/wallets/{address}")
         if response.status_code == 404:
             return None
         response.raise_for_status()
@@ -55,7 +57,7 @@ async def add_wallet_to_watchlist(address: str) -> tuple[bool, str]:
     async with get_api_client() as client:
         try:
             response = await client.post(
-                f"/wallets/{address}/profile",
+                f"/api/wallets/{address}/profile",
                 params={"force_update": True},
             )
             response.raise_for_status()
@@ -69,7 +71,7 @@ async def blacklist_wallet(address: str, reason: str) -> tuple[bool, str]:
     async with get_api_client() as client:
         try:
             response = await client.post(
-                f"/wallets/{address}/blacklist",
+                f"/api/wallets/{address}/blacklist",
                 params={"reason": reason},
             )
             response.raise_for_status()
@@ -82,7 +84,7 @@ async def unblacklist_wallet(address: str) -> tuple[bool, str]:
     """Remove wallet from blacklist."""
     async with get_api_client() as client:
         try:
-            response = await client.delete(f"/wallets/{address}/blacklist")
+            response = await client.delete(f"/api/wallets/{address}/blacklist")
             response.raise_for_status()
             return True, f"Wallet {address} removed from blacklist"
         except httpx.HTTPStatusError as e:

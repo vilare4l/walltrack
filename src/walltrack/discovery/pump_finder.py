@@ -60,7 +60,8 @@ class PumpFinder:
         """Find tokens that have pumped based on criteria.
 
         Uses DexScreener's token profiles and boosted tokens endpoints
-        to find high-performing tokens on Solana.
+        to find high-performing tokens on Solana, then fetches full
+        pair data for volume/marketcap information.
 
         Args:
             min_price_change_pct: Minimum 24h price change percentage
@@ -79,33 +80,34 @@ class PumpFinder:
             max_age_hours=max_age_hours,
         )
 
-        token_launches: list[TokenLaunch] = []
-
         try:
-            # Strategy 1: Get boosted tokens (promoted/trending)
-            boosted = await self._fetch_boosted_tokens()
-            token_launches.extend(
-                self._filter_and_convert(
-                    boosted,
-                    min_price_change_pct,
-                    min_volume_usd,
-                    min_liquidity_usd,
-                    max_age_hours,
-                )
-            )
+            # Step 1: Collect token addresses from boosted and profiles
+            addresses: set[str] = set()
 
-            # Strategy 2: Get token profiles (latest tokens with activity)
+            # Get boosted tokens (promoted/trending)
+            boosted = await self._fetch_boosted_tokens()
+            for token in boosted:
+                if addr := token.get("tokenAddress"):
+                    addresses.add(addr)
+
+            # Get token profiles (latest tokens with activity)
             profiles = await self._fetch_token_profiles()
-            for token in self._filter_and_convert(
-                profiles,
-                min_price_change_pct,
-                min_volume_usd,
-                min_liquidity_usd,
-                max_age_hours,
-            ):
-                # Avoid duplicates
-                if not any(t.mint == token.mint for t in token_launches):
+            for token in profiles:
+                if addr := token.get("tokenAddress"):
+                    addresses.add(addr)
+
+            log.debug("addresses_collected", count=len(addresses))
+
+            # Step 2: Fetch full pair data for each token (with rate limiting)
+            token_launches: list[TokenLaunch] = []
+            address_list = list(addresses)[:limit * 2]  # Fetch extra, filter later
+
+            for address in address_list:
+                token = await self._fetch_token_pair_data(address)
+                if token and token.volume_24h >= min_volume_usd:
                     token_launches.append(token)
+                    if len(token_launches) >= limit:
+                        break
 
             # Sort by volume and limit
             token_launches.sort(key=lambda t: t.volume_24h, reverse=True)
@@ -116,10 +118,11 @@ class PumpFinder:
                 found=len(token_launches),
             )
 
+            return token_launches
+
         except Exception as e:
             log.error("pump_search_error", error=str(e))
-
-        return token_launches
+            return []
 
     async def find_tokens_by_addresses(
         self,
@@ -209,6 +212,39 @@ class PumpFinder:
         except Exception as e:
             log.warning("profiles_fetch_failed", error=str(e))
             return []
+
+    async def _fetch_token_pair_data(self, address: str) -> TokenLaunch | None:
+        """Fetch full pair data for a token address.
+
+        Args:
+            address: Token mint address
+
+        Returns:
+            TokenLaunch with full data or None if fetch fails
+        """
+        client = await self._get_client()
+
+        try:
+            url = f"{DEXSCREENER_BASE_URL}/latest/dex/tokens/{address}"
+            response = await client.get(url)
+            response.raise_for_status()
+            data = response.json()
+
+            pairs = data.get("pairs", [])
+            if not pairs:
+                return None
+
+            # Use first pair (highest liquidity usually)
+            pair = pairs[0]
+            return self._pair_to_token_launch(pair)
+
+        except Exception as e:
+            log.debug(
+                "token_pair_fetch_failed",
+                address=address[:20],
+                error=str(e),
+            )
+            return None
 
     def _filter_and_convert(
         self,

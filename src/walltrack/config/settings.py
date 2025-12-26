@@ -46,6 +46,12 @@ class Settings(BaseSettings):
         default="INFO", description="Logging level"
     )
 
+    # Internal API URL (for dashboard to connect to API in Docker)
+    api_base_url: str = Field(
+        default="",
+        description="Base URL for internal API calls. If empty, uses http://localhost:{port}",
+    )
+
     # Neo4j
     neo4j_uri: str = Field(default="bolt://localhost:7687", description="Neo4j connection URI")
     neo4j_user: str = Field(default="neo4j", description="Neo4j username")
@@ -90,6 +96,12 @@ class Settings(BaseSettings):
     )
     helius_rpc_url: str = Field(default="", description="Helius RPC URL")
     helius_webhook_url: str = Field(default="", description="Webhook callback URL")
+    helius_webhook_id: str = Field(
+        default="", description="Helius webhook ID (set after first registration)"
+    )
+    helius_auto_sync_webhook: bool = Field(
+        default=True, description="Auto-sync webhook after discovery"
+    )
 
     # Jupiter
     jupiter_api_url: str = Field(

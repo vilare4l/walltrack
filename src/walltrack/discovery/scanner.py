@@ -18,6 +18,7 @@ from walltrack.data.models.wallet import (
 from walltrack.data.neo4j.client import Neo4jClient
 from walltrack.data.neo4j.queries.wallet import WalletQueries
 from walltrack.data.supabase.repositories.wallet_repo import WalletRepository
+from walltrack.discovery.profiler import WalletProfiler
 from walltrack.services.helius.client import HeliusClient
 
 log = structlog.get_logger()
@@ -110,6 +111,28 @@ class WalletDiscoveryScanner:
                     async with self.neo4j.session() as session:
                         await WalletQueries.create_or_update_wallet(session, wallet)
 
+                    # Profile the wallet to get accurate win rate and score
+                    try:
+                        profiler = WalletProfiler(self.wallet_repo, self.helius)
+                        profiled_wallet = await profiler.profile_wallet(
+                            wallet.address, force_update=True
+                        )
+                        if profiled_wallet:
+                            log.info(
+                                "wallet_profiled",
+                                address=wallet.address[:12],
+                                score=f"{profiled_wallet.score:.2f}",
+                                win_rate=f"{profiled_wallet.profile.win_rate:.1%}",
+                            )
+                        # Rate limit between profiles
+                        await asyncio.sleep(2.0)
+                    except Exception as profile_err:
+                        log.warning(
+                            "wallet_profiling_skipped",
+                            address=wallet.address[:12],
+                            error=str(profile_err)[:50],
+                        )
+
                     if is_new:
                         new_count += 1
                     else:
@@ -153,44 +176,38 @@ class WalletDiscoveryScanner:
         token_launches: list[TokenLaunch],
         early_window_minutes: int = 30,
         min_profit_pct: float = 50.0,
-        max_concurrent: int = 5,
+        max_concurrent: int = 1,
     ) -> list[DiscoveryResult]:
         """
-        Discover wallets from multiple token launches concurrently.
+        Discover wallets from multiple token launches sequentially.
 
         Args:
             token_launches: List of token launches to analyze
             early_window_minutes: Window for "early buyer" definition
             min_profit_pct: Minimum profit percentage
-            max_concurrent: Maximum concurrent discoveries
+            max_concurrent: Maximum concurrent discoveries (set to 1 to avoid rate limiting)
 
         Returns:
             List of DiscoveryResult for each token
         """
-        semaphore = asyncio.Semaphore(max_concurrent)
+        valid_results: list[DiscoveryResult] = []
 
-        async def bounded_discover(token: TokenLaunch) -> DiscoveryResult:
-            async with semaphore:
-                return await self.discover_from_token(
+        for i, token in enumerate(token_launches):
+            # Add delay between tokens to avoid Helius rate limiting
+            if i > 0:
+                await asyncio.sleep(2.0)
+
+            try:
+                result = await self.discover_from_token(
                     token, early_window_minutes, min_profit_pct
                 )
-
-        results = await asyncio.gather(
-            *[bounded_discover(token) for token in token_launches],
-            return_exceptions=True,
-        )
-
-        # Filter out exceptions and log them
-        valid_results: list[DiscoveryResult] = []
-        for i, result in enumerate(results):
-            if isinstance(result, BaseException):
+                valid_results.append(result)
+            except Exception as e:
                 log.error(
                     "discovery_batch_error",
-                    token=token_launches[i].mint,
-                    error=str(result),
+                    token=token.mint,
+                    error=str(e),
                 )
-            elif isinstance(result, DiscoveryResult):
-                valid_results.append(result)
 
         return valid_results
 
@@ -217,7 +234,7 @@ class WalletDiscoveryScanner:
         for tx in transactions:
             # Get fee payer as potential buyer
             fee_payer = tx.get("feePayer")
-            
+
             # Also check token transfers for receiver addresses
             for transfer in tx.get("tokenTransfers", []):
                 # If this transfer involves our token and has a receiver
@@ -229,7 +246,7 @@ class WalletDiscoveryScanner:
                             "first_buy_time": tx.get("timestamp"),
                             "buy_amount": transfer.get("tokenAmount", 0),
                         }
-            
+
             # Fee payer is often the buyer
             if fee_payer and fee_payer not in buyers:
                 buyers[fee_payer] = {
@@ -249,8 +266,12 @@ class WalletDiscoveryScanner:
         """Filter wallets to those with profitable exits."""
         profitable: list[dict[str, Any]] = []
 
-        for wallet_data in wallets:
+        for i, wallet_data in enumerate(wallets):
             address = wallet_data["address"]
+
+            # Rate limiting: add longer delay between Helius API calls
+            if i > 0:
+                await asyncio.sleep(1.5)
 
             try:
                 # Get wallet's transactions (SWAP type for sells)

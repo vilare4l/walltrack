@@ -246,25 +246,39 @@ def create_discovery_tab() -> None:
 
 ## Implementation Tasks
 
-- [ ] Implement history fetching
-- [ ] Implement stats fetching
-- [ ] Create history table UI
-- [ ] Create stats display
-- [ ] Add date range filtering
-- [ ] Add pagination
-- [ ] Integrate with discovery tab
-- [ ] Test UI functionality
+- [x] Implement history fetching
+- [x] Implement stats fetching
+- [x] Create history table UI
+- [x] Create stats display
+- [x] Add date range filtering
+- [x] Add pagination
+- [x] Integrate with discovery tab
+- [x] Test UI functionality
 
 ## Definition of Done
 
-- [ ] History table shows recent runs
-- [ ] Stats are displayed correctly
-- [ ] Date filtering works
-- [ ] Pagination works
-- [ ] UI updates after new runs
-- [ ] Tests pass
+- [x] History table shows recent runs
+- [x] Stats are displayed correctly
+- [x] Date filtering works
+- [x] Pagination works
+- [x] UI updates after new runs
+- [x] Tests pass (29 tests)
+
+## Dev Agent Record
+
+### Implementation Notes (2024-12-24)
+- Extended `discovery.py` with history and stats sections
+- Added `fetch_discovery_history` function with pagination support
+- Updated `fetch_discovery_stats` to return dict instead of DataFrame
+- Added `format_stats_display` function for markdown rendering
+- Created helper functions: `_create_config_section`, `_create_history_section`
+- Added pagination functions: `go_prev_page`, `go_next_page`, `apply_filter`
+- Full-width history section with date filtering and pagination controls
+- Stats display shows key metrics in markdown table format
+- All 29 tests passing
 
 ## File List
 
 ### Modified Files
 - `src/walltrack/ui/components/discovery.py` - Add history/stats sections
+- `tests/unit/ui/components/test_discovery.py` - Extended to 29 tests

@@ -385,30 +385,39 @@ def create_discovery_tab() -> None:
 
 ## Implementation Tasks
 
-- [ ] Create discovery.py component
-- [ ] Implement scheduler section
-- [ ] Implement parameters section
-- [ ] Implement actions section
-- [ ] Implement pumps display
-- [ ] Add event handlers
-- [ ] Integrate with dashboard
-- [ ] Test UI functionality
+- [x] Create discovery.py component
+- [x] Implement scheduler section
+- [x] Implement parameters section
+- [x] Implement actions section
+- [x] Implement pumps display
+- [x] Add event handlers
+- [x] Integrate with dashboard
+- [x] Test UI functionality
 
 ## Definition of Done
 
-- [ ] Tab appears in dashboard
-- [ ] Scheduler controls work
-- [ ] Parameters can be edited
-- [ ] Save persists configuration
-- [ ] Run Now triggers discovery
-- [ ] View Pumps shows current tokens
-- [ ] UI is responsive and intuitive
+- [x] Tab appears in dashboard
+- [x] Scheduler controls work
+- [x] Parameters can be edited
+- [x] Save persists configuration
+- [x] Run Now triggers discovery
+- [x] View Pumps shows current tokens
+- [x] UI is responsive and intuitive
+
+## Dev Agent Record
+
+### Implementation Notes (2024-12-24)
+- Created `discovery.py` component with scheduler and parameters sections
+- Implemented async API calls for config, stats, and discovery trigger
+- Added pumped tokens display using PumpFinder
+- Integrated with dashboard as new Discovery tab
+- Added 15 unit tests (all passing)
 
 ## File List
 
 ### New Files
-- `src/walltrack/ui/components/discovery.py` - UI component
-- `tests/unit/ui/test_discovery_component.py` - Component tests
+- `src/walltrack/ui/components/discovery.py` - UI component with all sections
+- `tests/unit/ui/components/test_discovery.py` - 15 component tests
 
 ### Modified Files
-- `src/walltrack/ui/dashboard.py` - Add Discovery tab
+- `src/walltrack/ui/dashboard.py` - Added Discovery tab

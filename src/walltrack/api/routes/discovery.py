@@ -1,66 +1,10 @@
-# Story 9.2: Discovery API Endpoints
-
-## Story Info
-- **Epic**: Epic 9 - Discovery Management & Scheduling
-- **Status**: ready
-- **Priority**: High
-- **Depends on**: Story 9.1 (Discovery Runs History)
-
-## User Story
-
-**As an** operator or external system,
-**I want** API endpoints to manage discovery,
-**So that** I can trigger, monitor, and configure discovery programmatically.
-
-## Acceptance Criteria
-
-### AC 1: Trigger Discovery
-**Given** valid discovery parameters
-**When** POST /api/discovery/run is called
-**Then** a new discovery run is started
-**And** run ID is returned immediately
-**And** discovery executes in background
-
-### AC 2: Get Run Status
-**Given** a discovery run ID
-**When** GET /api/discovery/runs/{id} is called
-**Then** current run status is returned
-**And** includes progress if running
-**And** includes results if completed
-
-### AC 3: List Runs History
-**Given** history query parameters
-**When** GET /api/discovery/runs is called
-**Then** paginated list of runs is returned
-**And** can filter by date range
-**And** can filter by status
-
-### AC 4: Get Discovery Stats
-**Given** stats request
-**When** GET /api/discovery/stats is called
-**Then** aggregated statistics are returned
-**And** includes counts and averages
-**And** can filter by date range
-
-### AC 5: Get/Update Config
-**Given** config request
-**When** GET/PUT /api/discovery/config is called
-**Then** current scheduler config is returned/updated
-**And** includes schedule, enabled flag, parameters
-
-## Technical Specifications
-
-### API Routes
-
-**src/walltrack/api/routes/discovery.py:**
-```python
 """Discovery management API endpoints."""
 
+import time
 from datetime import datetime
-from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from walltrack.data.supabase.client import get_supabase_client
@@ -69,8 +13,10 @@ from walltrack.discovery.models import (
     DiscoveryRun,
     DiscoveryRunParams,
     DiscoveryStats,
+    RunStatus,
     TriggerType,
 )
+from walltrack.scheduler.discovery_scheduler import get_discovery_scheduler
 from walltrack.scheduler.tasks.discovery_task import run_discovery_task
 
 router = APIRouter(prefix="/discovery", tags=["discovery"])
@@ -78,6 +24,7 @@ router = APIRouter(prefix="/discovery", tags=["discovery"])
 
 class TriggerDiscoveryRequest(BaseModel):
     """Request to trigger a discovery run."""
+
     min_price_change_pct: float = Field(default=100.0, ge=0, le=1000)
     min_volume_usd: float = Field(default=50000.0, ge=0)
     max_token_age_hours: int = Field(default=72, ge=1, le=168)
@@ -89,6 +36,7 @@ class TriggerDiscoveryRequest(BaseModel):
 
 class TriggerDiscoveryResponse(BaseModel):
     """Response from triggering discovery."""
+
     run_id: UUID
     status: str
     message: str
@@ -96,6 +44,7 @@ class TriggerDiscoveryResponse(BaseModel):
 
 class RunsListResponse(BaseModel):
     """Paginated list of runs."""
+
     runs: list[DiscoveryRun]
     total: int
     page: int
@@ -104,18 +53,20 @@ class RunsListResponse(BaseModel):
 
 
 class DiscoveryConfigRequest(BaseModel):
-    """Discovery scheduler configuration."""
+    """Discovery scheduler configuration request."""
+
     enabled: bool = True
     schedule_hours: int = Field(default=6, ge=1, le=24)
     params: DiscoveryRunParams = Field(default_factory=DiscoveryRunParams)
 
 
-class DiscoveryConfig(BaseModel):
+class DiscoveryConfigResponse(BaseModel):
     """Current discovery configuration."""
+
     enabled: bool
     schedule_hours: int
-    next_run_at: Optional[datetime] = None
-    last_run_at: Optional[datetime] = None
+    next_run_at: datetime | None = None
+    last_run_at: datetime | None = None
     params: DiscoveryRunParams
 
 
@@ -133,10 +84,10 @@ async def trigger_discovery(
     supabase = await get_supabase_client()
     repo = DiscoveryRepository(supabase)
 
-    # Create run record
+    # Create run record upfront so we can return the ID immediately
     run = await repo.create_run(
         trigger_type=TriggerType.API,
-        params=request.model_dump(),
+        params=request.model_dump(exclude={"profile_immediately"}),
         triggered_by="api",
     )
 
@@ -145,7 +96,6 @@ async def trigger_discovery(
         _execute_discovery,
         run.id,
         request,
-        repo,
     )
 
     return TriggerDiscoveryResponse(
@@ -158,13 +108,15 @@ async def trigger_discovery(
 async def _execute_discovery(
     run_id: UUID,
     params: TriggerDiscoveryRequest,
-    repo: DiscoveryRepository,
 ) -> None:
     """Execute discovery and update run record."""
-    import time
+    supabase = await get_supabase_client()
+    repo = DiscoveryRepository(supabase)
+
     start = time.time()
 
     try:
+        # Run discovery without tracking (we already created the run record)
         result = await run_discovery_task(
             min_price_change_pct=params.min_price_change_pct,
             min_volume_usd=params.min_volume_usd,
@@ -173,6 +125,9 @@ async def _execute_discovery(
             min_profit_pct=params.min_profit_pct,
             max_tokens=params.max_tokens,
             profile_immediately=params.profile_immediately,
+            trigger_type=TriggerType.API,
+            triggered_by="api",
+            track_run=False,  # We already created the run record
         )
 
         await repo.complete_run(
@@ -204,20 +159,32 @@ async def get_run(run_id: UUID) -> DiscoveryRun:
 
 @router.get("/runs", response_model=RunsListResponse)
 async def list_runs(
-    start_date: Optional[datetime] = None,
-    end_date: Optional[datetime] = None,
-    status: Optional[str] = None,
-    page: int = 1,
-    page_size: int = 20,
+    start_date: datetime | None = Query(default=None),
+    end_date: datetime | None = Query(default=None),
+    status: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
 ) -> RunsListResponse:
     """List discovery runs with optional filters."""
     supabase = await get_supabase_client()
     repo = DiscoveryRepository(supabase)
 
+    # Convert status string to enum if provided
+    status_filter = None
+    if status:
+        try:
+            status_filter = RunStatus(status)
+        except ValueError as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid status. Valid values: {[s.value for s in RunStatus]}",
+            ) from e
+
     offset = (page - 1) * page_size
     runs = await repo.get_runs(
         start_date=start_date,
         end_date=end_date,
+        status=status_filter,
         limit=page_size + 1,  # +1 to check has_more
         offset=offset,
     )
@@ -228,7 +195,7 @@ async def list_runs(
 
     return RunsListResponse(
         runs=runs,
-        total=len(runs),  # Would need count query for real total
+        total=len(runs),  # Note: Would need count query for accurate total
         page=page,
         page_size=page_size,
         has_more=has_more,
@@ -237,8 +204,8 @@ async def list_runs(
 
 @router.get("/stats", response_model=DiscoveryStats)
 async def get_stats(
-    start_date: Optional[datetime] = None,
-    end_date: Optional[datetime] = None,
+    start_date: datetime | None = Query(default=None),
+    end_date: datetime | None = Query(default=None),
 ) -> DiscoveryStats:
     """Get discovery statistics."""
     supabase = await get_supabase_client()
@@ -247,69 +214,36 @@ async def get_stats(
     return await repo.get_stats(start_date, end_date)
 
 
-@router.get("/config", response_model=DiscoveryConfig)
-async def get_config() -> DiscoveryConfig:
+@router.get("/config", response_model=DiscoveryConfigResponse)
+async def get_config() -> DiscoveryConfigResponse:
     """Get current discovery scheduler configuration."""
-    # TODO: Load from database or settings
-    from walltrack.config.settings import get_settings
-    settings = get_settings()
+    scheduler = await get_discovery_scheduler()
 
-    return DiscoveryConfig(
-        enabled=True,  # TODO: Store in DB
-        schedule_hours=6,  # TODO: Store in DB
-        next_run_at=None,  # TODO: Get from scheduler
-        last_run_at=None,  # TODO: Get from repo
-        params=DiscoveryRunParams(),
+    return DiscoveryConfigResponse(
+        enabled=scheduler.enabled,
+        schedule_hours=scheduler.schedule_hours,
+        next_run_at=scheduler.next_run,
+        last_run_at=scheduler.last_run,
+        params=scheduler.params,
     )
 
 
-@router.put("/config", response_model=DiscoveryConfig)
-async def update_config(request: DiscoveryConfigRequest) -> DiscoveryConfig:
+@router.put("/config", response_model=DiscoveryConfigResponse)
+async def update_config(request: DiscoveryConfigRequest) -> DiscoveryConfigResponse:
     """Update discovery scheduler configuration."""
-    # TODO: Save to database
-    # TODO: Update scheduler
+    scheduler = await get_discovery_scheduler()
 
-    return DiscoveryConfig(
+    await scheduler.save_config(
         enabled=request.enabled,
         schedule_hours=request.schedule_hours,
         params=request.params,
+        updated_by="api",
     )
-```
 
-### Register Routes
-
-**Update src/walltrack/api/app.py:**
-```python
-from walltrack.api.routes.discovery import router as discovery_router
-
-app.include_router(discovery_router, prefix="/api")
-```
-
-## Implementation Tasks
-
-- [ ] Create discovery router with all endpoints
-- [ ] Implement trigger endpoint with background execution
-- [ ] Implement run status endpoint
-- [ ] Implement runs list with pagination
-- [ ] Implement stats endpoint
-- [ ] Implement config get/update endpoints
-- [ ] Register routes in app
-- [ ] Write API tests
-
-## Definition of Done
-
-- [ ] All endpoints return correct responses
-- [ ] Discovery runs in background
-- [ ] Pagination works correctly
-- [ ] Stats are calculated accurately
-- [ ] Config can be updated
-- [ ] API tests pass
-
-## File List
-
-### New Files
-- `src/walltrack/api/routes/discovery.py` - API endpoints
-- `tests/api/test_discovery_api.py` - API tests
-
-### Modified Files
-- `src/walltrack/api/app.py` - Register routes
+    return DiscoveryConfigResponse(
+        enabled=scheduler.enabled,
+        schedule_hours=scheduler.schedule_hours,
+        next_run_at=scheduler.next_run,
+        last_run_at=scheduler.last_run,
+        params=scheduler.params,
+    )
