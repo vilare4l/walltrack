@@ -91,6 +91,9 @@ class PositionService:
             "entry_amount_sol": entry_amount_sol,
             "entry_amount_tokens": entry_amount_tokens,
             "current_amount_tokens": entry_amount_tokens,
+            # Legacy columns required by DB schema
+            "entry_amount": entry_amount_sol,
+            "tokens_held": entry_amount_tokens,
             "status": PositionStatus.OPEN.value,
             "simulated": is_simulation_mode(),
             "exit_strategy_id": exit_strategy_id,

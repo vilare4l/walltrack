@@ -1,13 +1,21 @@
 """Signal processing pipeline."""
 
+from __future__ import annotations
+
 import time
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import structlog
+
+if TYPE_CHECKING:
+    from walltrack.models.position import Position
+    from walltrack.services.trade.position_sizer import PositionSizer
 
 from walltrack.data.models.wallet import Wallet
 from walltrack.data.supabase.repositories.signal_repo import SignalRepository
 from walltrack.data.supabase.repositories.wallet_repo import WalletRepository
+from walltrack.models.position_sizing import PositionSizeRequest
 from walltrack.models.signal_filter import (
     FilterStatus,
     ProcessingResult,
@@ -16,6 +24,7 @@ from walltrack.models.signal_log import SignalLogEntry, SignalStatus
 from walltrack.models.threshold import EligibilityStatus
 from walltrack.models.token import TokenCharacteristics, TokenSource
 from walltrack.services.helius.models import ParsedSwapEvent
+from walltrack.services.position_service import PositionService
 from walltrack.services.scoring.signal_scorer import SignalScorer
 from walltrack.services.scoring.threshold_checker import ThresholdChecker
 from walltrack.services.signal.filter import SignalFilter
@@ -40,6 +49,8 @@ class SignalPipeline:
         wallet_repo: WalletRepository,
         token_fetcher: TokenFetcher,
         signal_repo: SignalRepository | None = None,
+        position_service: PositionService | None = None,
+        position_sizer: PositionSizer | None = None,
     ) -> None:
         """Initialize signal pipeline with all components.
 
@@ -50,6 +61,8 @@ class SignalPipeline:
             wallet_repo: Wallet repository for loading wallet data
             token_fetcher: Token fetcher for loading token characteristics
             signal_repo: Signal repository for logging (optional, Story 9.9)
+            position_service: Position service for creating positions (Epic 4)
+            position_sizer: Position sizer for calculating trade sizes (Epic 4)
         """
         self.signal_filter = signal_filter
         self.signal_scorer = signal_scorer
@@ -57,10 +70,15 @@ class SignalPipeline:
         self.wallet_repo = wallet_repo
         self.token_fetcher = token_fetcher
         self.signal_repo = signal_repo
+        self.position_service = position_service
+        self.position_sizer = position_sizer
 
         # Simple wallet cache (address -> Wallet)
         self._wallet_cache: dict[str, tuple[Wallet, float]] = {}
         self._wallet_cache_ttl = 300.0  # 5 minutes
+
+        # Default exit strategy ID
+        self._default_exit_strategy_id = "default-exit-strategy"
 
     async def process_swap_event(
         self, event: ParsedSwapEvent
@@ -202,7 +220,7 @@ class SignalPipeline:
             context_score=scored_signal.context_score.score,
             conviction_tier=threshold_result.conviction_tier.value,
             position_multiplier=threshold_result.position_multiplier,
-            trade_queued=False,  # TODO: Queue for execution in Epic 4
+            trade_queued=False,
             processing_time_ms=processing_time,
         )
 
@@ -210,6 +228,30 @@ class SignalPipeline:
         signal_id = await self._log_signal(event, result)
         if signal_id:
             result.signal_id = signal_id
+
+        # Create position for BUY signals if position service is available
+        if (
+            self.position_service is not None
+            and event.direction.value == "buy"
+            and signal_id
+        ):
+            position = await self._create_position_from_signal(
+                event=event,
+                signal_id=signal_id,
+                final_score=scored_signal.final_score,
+                conviction_tier=threshold_result.conviction_tier.value,
+                token=token,
+            )
+            if position:
+                result.trade_queued = True
+                result.position_id = position.id
+                logger.info(
+                    "position_created_from_signal",
+                    signal_id=signal_id,
+                    position_id=position.id,
+                    simulated=position.simulated,
+                    entry_sol=position.entry_amount_sol,
+                )
 
         return result
 
@@ -272,6 +314,122 @@ class SignalPipeline:
             logger.warning(
                 "signal_logging_failed",
                 tx=event.tx_signature[:8] + "...",
+                error=str(e),
+            )
+            return None
+
+    async def _create_position_from_signal(
+        self,
+        event: ParsedSwapEvent,
+        signal_id: str,
+        final_score: float,
+        conviction_tier: str,
+        token: TokenCharacteristics,
+    ) -> Position | None:
+        """Create a position from a trade-eligible signal.
+
+        Uses PositionSizer to calculate proper position size based on:
+        - Signal score and conviction tier
+        - Available balance and current allocations
+        - Configured multipliers and limits
+
+        Args:
+            event: Swap event that triggered the signal
+            signal_id: ID of the logged signal
+            final_score: Signal final score for sizing calculation
+            conviction_tier: "high" or "standard"
+            token: Token characteristics for symbol
+
+        Returns:
+            Position if created, None if sizing fails or limits exceeded
+        """
+        if self.position_service is None:
+            return None
+
+        try:
+            # Calculate entry price (SOL per token)
+            if event.amount_token > 0:
+                entry_price = event.amount_sol / event.amount_token
+            else:
+                logger.warning(
+                    "invalid_token_amount",
+                    signal_id=signal_id,
+                    amount_token=event.amount_token,
+                )
+                return None
+
+            # Calculate position size using PositionSizer
+            if self.position_sizer is not None:
+                # Get current positions to check limits
+                active_positions = await self.position_service.get_active_positions()
+                current_allocated = sum(p.entry_amount_sol for p in active_positions)
+
+                # TODO: Get actual wallet balance in production
+                # For simulation, use a reasonable default balance
+                simulated_balance = 10.0  # 10 SOL simulated balance
+
+                size_request = PositionSizeRequest(
+                    signal_score=final_score,
+                    available_balance_sol=simulated_balance,
+                    current_position_count=len(active_positions),
+                    current_allocated_sol=current_allocated,
+                    token_address=event.token_address,
+                    signal_id=signal_id,
+                )
+
+                size_result = await self.position_sizer.calculate_size(size_request)
+
+                if not size_result.should_trade:
+                    logger.info(
+                        "position_sizing_rejected",
+                        signal_id=signal_id,
+                        decision=size_result.decision.value,
+                        reason=size_result.reason,
+                    )
+                    return None
+
+                entry_amount_sol = size_result.final_size_sol
+                entry_amount_tokens = entry_amount_sol / entry_price
+
+                logger.info(
+                    "position_size_calculated",
+                    signal_id=signal_id,
+                    base_size=size_result.base_size_sol,
+                    multiplier=size_result.multiplier,
+                    final_size=size_result.final_size_sol,
+                    conviction=size_result.conviction_tier.value,
+                )
+            else:
+                # Fallback: use event amounts if no sizer available
+                entry_amount_sol = event.amount_sol
+                entry_amount_tokens = event.amount_token
+                logger.warning(
+                    "position_sizer_not_available",
+                    signal_id=signal_id,
+                    using_event_amounts=True,
+                )
+
+            # Get token symbol if available
+            token_symbol = getattr(token, "symbol", None)
+
+            # Create position (simulated flag set automatically by PositionService)
+            position = await self.position_service.create_position(
+                signal_id=signal_id,
+                token_address=event.token_address,
+                entry_price=entry_price,
+                entry_amount_sol=entry_amount_sol,
+                entry_amount_tokens=entry_amount_tokens,
+                exit_strategy_id=self._default_exit_strategy_id,
+                conviction_tier=conviction_tier,
+                token_symbol=token_symbol,
+            )
+
+            return position
+
+        except Exception as e:
+            logger.error(
+                "position_creation_failed",
+                signal_id=signal_id,
                 error=str(e),
             )
             return None
@@ -378,6 +536,9 @@ async def get_pipeline() -> SignalPipeline:
         from walltrack.data.supabase.repositories.wallet_repo import (  # noqa: PLC0415
             WalletRepository,
         )
+        from walltrack.services.position_service import (  # noqa: PLC0415
+            get_position_service,
+        )
         from walltrack.services.scoring.signal_scorer import (  # noqa: PLC0415
             SignalScorer,
         )
@@ -389,6 +550,9 @@ async def get_pipeline() -> SignalPipeline:
         )
         from walltrack.services.token.fetcher import (  # noqa: PLC0415
             get_token_fetcher,
+        )
+        from walltrack.services.trade.position_sizer import (  # noqa: PLC0415
+            get_position_sizer,
         )
 
         # Initialize Supabase client and repositories
@@ -405,6 +569,8 @@ async def get_pipeline() -> SignalPipeline:
         signal_scorer = SignalScorer()
         threshold_checker = ThresholdChecker()
         token_fetcher = await get_token_fetcher()
+        position_service = await get_position_service()
+        position_sizer = await get_position_sizer()
 
         _pipeline = SignalPipeline(
             signal_filter=signal_filter,
@@ -413,6 +579,8 @@ async def get_pipeline() -> SignalPipeline:
             wallet_repo=wallet_repo,
             token_fetcher=token_fetcher,
             signal_repo=signal_repo,
+            position_service=position_service,
+            position_sizer=position_sizer,
         )
 
         logger.info("signal_pipeline_initialized")

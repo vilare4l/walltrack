@@ -92,6 +92,7 @@ class ProcessingResult(BaseModel):
     # Execution status
     trade_queued: bool = False
     signal_id: str | None = None
+    position_id: str | None = None
 
     # Timing
     processing_time_ms: float = 0.0
