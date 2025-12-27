@@ -29,7 +29,7 @@ async def load_config(table: str) -> dict[str, Any]:
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
-                f"{get_api_base_url()}/api/config/{table}"
+                f"{get_api_base_url()}/api/config/lifecycle/{table}"
             )
             if response.status_code == 200:
                 return response.json()
@@ -55,7 +55,7 @@ async def load_all_configs(table: str) -> list[dict[str, Any]]:
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
-                f"{get_api_base_url()}/api/config/{table}/all"
+                f"{get_api_base_url()}/api/config/lifecycle/{table}/all"
             )
             if response.status_code == 200:
                 data = response.json()
@@ -78,7 +78,7 @@ async def create_draft(table: str, name: str = "Draft") -> dict[str, Any] | None
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
-                f"{get_api_base_url()}/api/config/{table}/draft",
+                f"{get_api_base_url()}/api/config/lifecycle/{table}/draft",
                 json={"name": name}
             )
             if response.status_code == 200:
@@ -116,7 +116,7 @@ async def update_draft(
 
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.patch(
-                f"{get_api_base_url()}/api/config/{table}/draft",
+                f"{get_api_base_url()}/api/config/lifecycle/{table}/draft",
                 json=payload
             )
             if response.status_code == 200:
@@ -149,7 +149,7 @@ async def activate_draft(table: str, reason: str | None = None) -> dict[str, Any
 
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
-                f"{get_api_base_url()}/api/config/{table}/activate",
+                f"{get_api_base_url()}/api/config/lifecycle/{table}/activate",
                 json=payload
             )
             if response.status_code == 200:
@@ -177,7 +177,7 @@ async def delete_draft(table: str) -> bool:
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.delete(
-                f"{get_api_base_url()}/api/config/{table}/draft"
+                f"{get_api_base_url()}/api/config/lifecycle/{table}/draft"
             )
             if response.status_code == 200:
                 return True
@@ -191,12 +191,12 @@ async def delete_draft(table: str) -> bool:
     return False
 
 
-async def restore_archived(table: str, version: int) -> dict[str, Any] | None:
+async def restore_archived(table: str, config_id: str) -> dict[str, Any] | None:
     """Restore an archived config version.
 
     Args:
         table: Config table name
-        version: Version number to restore
+        config_id: UUID of the archived config to restore
 
     Returns:
         Restored config as draft or None on error
@@ -204,18 +204,18 @@ async def restore_archived(table: str, version: int) -> dict[str, Any] | None:
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
-                f"{get_api_base_url()}/api/config/{table}/restore/{version}"
+                f"{get_api_base_url()}/api/config/lifecycle/{table}/{config_id}/restore"
             )
             if response.status_code == 200:
                 return response.json()
             logger.warning(
                 "config_restore_failed",
                 table=table,
-                version=version,
+                config_id=config_id,
                 status=response.status_code
             )
     except Exception as e:
-        logger.error("config_restore_error", table=table, error=str(e))
+        logger.error("config_restore_error", table=table, config_id=config_id, error=str(e))
     return None
 
 
@@ -237,8 +237,8 @@ async def get_audit_log(
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
-                f"{get_api_base_url()}/api/config/{table}/audit",
-                params={"limit": limit, "offset": offset}
+                f"{get_api_base_url()}/api/config/audit",
+                params={"table": table, "limit": limit, "offset": offset}
             )
             if response.status_code == 200:
                 data = response.json()

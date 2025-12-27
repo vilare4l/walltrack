@@ -243,12 +243,8 @@ def create_orders_page(sidebar_state: gr.State | None = None) -> gr.Column:  # n
         outputs=load_outputs,
     )
 
-    # Auto-load on page render
-    orders_page.render(
-        fn=load_orders,
-        inputs=filter_inputs,
-        outputs=load_outputs,
-    )
+    # Note: Auto-load removed - click Refresh to load orders
+    # Gradio Blocks.render() doesn't support fn/inputs/outputs parameters
 
     result: gr.Column = orders_page
     return result

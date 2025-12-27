@@ -190,7 +190,7 @@ class SignalAmplifier:
     async def _get_wallet_clusters(self, wallet_address: str) -> list[Cluster]:
         """Get all clusters containing this wallet."""
         query = """
-        MATCH (c:Cluster)-[:HAS_MEMBER]->(w:Wallet {address: $address})
+        MATCH (w:Wallet {address: $address})-[:MEMBER_OF]->(c:Cluster)
         RETURN c.id as cluster_id
         """
         results = await self._neo4j.execute_query(query, {"address": wallet_address})

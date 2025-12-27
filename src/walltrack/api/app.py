@@ -13,7 +13,9 @@ from walltrack.api.routes import (
     config,
     discovery,
     health,
+    orders,
     positions,
+    position_sizing,
     risk,
     trades,
     wallets,
@@ -111,5 +113,7 @@ def create_app() -> FastAPI:
     app.include_router(discovery.router, prefix="/api")
     app.include_router(positions.router, prefix="/api")
     app.include_router(positions.analysis_router, prefix="/api")
+    app.include_router(orders.router, prefix="/api/orders")
+    app.include_router(position_sizing.router, prefix="/api/position-sizing")
 
     return app

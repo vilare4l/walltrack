@@ -1,10 +1,22 @@
 """Positions and trade history dashboard component.
 
+DEPRECATED: This module uses sample data and is being replaced by positions_list.py
+which fetches real data from the API. Use positions_list.py for production code.
+
 Displays active positions, trade history, and pending signals
 in the dashboard UI.
 """
 
 from __future__ import annotations
+
+import warnings
+
+warnings.warn(
+    "walltrack.ui.components.positions is deprecated. "
+    "Use walltrack.ui.components.positions_list instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 from datetime import datetime
 from typing import TYPE_CHECKING

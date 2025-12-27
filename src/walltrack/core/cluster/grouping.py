@@ -174,9 +174,9 @@ class ClusterGrouper:
 
         # Find wallets connected to cluster members but not in cluster
         query = """
-        MATCH (c:Cluster {id: $cluster_id})-[:HAS_MEMBER]->(m:Wallet)
+        MATCH (m:Wallet)-[:MEMBER_OF]->(c:Cluster {id: $cluster_id})
         MATCH (m)-[r:FUNDED_BY|BUYS_WITH|CO_OCCURS]-(candidate:Wallet)
-        WHERE NOT (c)-[:HAS_MEMBER]->(candidate)
+        WHERE NOT (candidate)-[:MEMBER_OF]->(c)
         WITH candidate, count(DISTINCT r) as connections
         WHERE connections >= $min_connections
         RETURN candidate.address as address, connections
@@ -220,7 +220,7 @@ class ClusterGrouper:
         query = """
         MATCH (c:Cluster {id: $cluster_id})
         MATCH (w:Wallet {address: $address})
-        MERGE (c)-[r:HAS_MEMBER]->(w)
+        MERGE (w)-[r:MEMBER_OF]->(c)
         SET r.join_reason = $join_reason,
             r.connection_count = $connection_count,
             c.size = c.size + 1
@@ -322,7 +322,7 @@ class ClusterGrouper:
     async def get_wallet_clusters(self, wallet_address: str) -> list[Cluster]:
         """Get all clusters a wallet belongs to."""
         query = """
-        MATCH (c:Cluster)-[:HAS_MEMBER]->(w:Wallet {address: $address})
+        MATCH (w:Wallet {address: $address})-[:MEMBER_OF]->(c:Cluster)
         RETURN c.id as cluster_id
         """
         results = await self._neo4j.execute_query(query, {"address": wallet_address})

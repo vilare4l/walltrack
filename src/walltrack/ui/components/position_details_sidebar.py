@@ -166,7 +166,7 @@ def render_active_position(position: dict[str, Any]) -> str:
 
 ---
 
-## 🎯 Stratégie Active: {strategy_name}
+## 🎯 Active Strategy: {strategy_name}
 
 """
     if rules:
@@ -185,7 +185,7 @@ def render_active_position(position: dict[str, Any]) -> str:
                 md += f"| {rule_type} | - | {exit_pct}% | ⏳ |\n"
 
         if next_tp_info:
-            md += f"\n**Prochain TP dans:** {next_tp_info}\n"
+            md += f"\n**Next TP in:** {next_tp_info}\n"
 
     md += f"""
 ---
@@ -239,7 +239,7 @@ def render_closed_position(position: dict[str, Any]) -> str:
     pnl_emoji = "🟢" if pnl_pct >= 0 else "🔴"
 
     md = f"""
-## 📊 Résultat Final
+## 📊 Final Result
 
 | Metric | Value |
 |--------|-------|
@@ -251,7 +251,7 @@ def render_closed_position(position: dict[str, Any]) -> str:
 
 ---
 
-## 🎯 Stratégie Utilisée: {strategy_name}
+## 🎯 Strategy Used: {strategy_name}
 
 """
     if rules:
