@@ -353,6 +353,48 @@ class SignalRepository:
             status=status.value,
         )
 
+    async def update_execution_status(
+        self,
+        signal_id: str,
+        status: str,
+        error: str | None = None,
+    ) -> None:
+        """Update signal execution status.
+
+        Args:
+            signal_id: UUID of the signal
+            status: Execution status (executed, failed, blocked, error)
+            error: Optional error message
+        """
+        # Map execution status to SignalStatus
+        status_map = {
+            "executed": SignalStatus.EXECUTED,
+            "failed": SignalStatus.FAILED,
+            "blocked": SignalStatus.FILTERED_OUT,
+            "error": SignalStatus.FAILED,
+        }
+        signal_status = status_map.get(status, SignalStatus.FAILED)
+
+        update_data: dict[str, Any] = {
+            "status": signal_status.value,
+            "eligibility_status": status,
+        }
+        if error:
+            update_data["filter_reason"] = error
+
+        await (
+            self._supabase_client.table("signals")
+            .update(update_data)
+            .eq("id", signal_id)
+            .execute()
+        )
+
+        logger.debug(
+            "signal_execution_status_updated",
+            signal_id=signal_id[:8] + "...",
+            status=status,
+        )
+
     def _row_to_entry(self, row: dict[str, Any]) -> SignalLogEntry:
         """Convert database row to SignalLogEntry.
 

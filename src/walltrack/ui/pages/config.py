@@ -1,303 +1,893 @@
-"""Config page - all settings in one place."""
+"""Configuration management page with lifecycle support."""
+
+from typing import Any
 
 import gradio as gr
+import structlog
 
-from walltrack.constants.scoring import (
-    DEFAULT_CLUSTER_WEIGHT,
-    DEFAULT_CONTEXT_WEIGHT,
-    DEFAULT_TOKEN_WEIGHT,
-    DEFAULT_WALLET_WEIGHT,
+from walltrack.ui.components.config_history import (
+    create_audit_tab,
+    create_history_tab,
 )
-from walltrack.constants.threshold import (
-    DEFAULT_HIGH_CONVICTION_THRESHOLD,
-    DEFAULT_TRADE_THRESHOLD,
+from walltrack.ui.pages.config_handlers import (
+    activate_draft_sync,
+    create_draft_sync,
+    delete_draft_sync,
+    load_config_sync,
+    update_draft_sync,
 )
-from walltrack.ui.components.config_panel import (
-    calculate_preview_score,
-    calculate_sum,
-    create_weights_chart,
-    fetch_recent_signals,
-    normalize_weights,
-    update_threshold,
-    update_weights,
-)
+
+logger = structlog.get_logger(__name__)
+
+# Config tables and their display names
+CONFIG_TABLES = {
+    "trading": "Trading",
+    "scoring": "Scoring",
+    "discovery": "Discovery",
+    "cluster": "Cluster",
+    "risk": "Risk",
+    "exit": "Exit",
+    "api": "API",
+}
 
 
 def create_config_page() -> None:
-    """Create the config page UI with all settings."""
-    gr.Markdown("## Configuration")
+    """Create the configuration management page with lifecycle tabs."""
+    gr.Markdown("## Configuration Management")
     gr.Markdown(
-        "Adjust scoring weights, thresholds, and other system settings. "
-        "Changes take effect immediately."
+        "Manage system configurations with version control. "
+        "Edit creates a draft, which must be activated to take effect."
     )
 
     with gr.Tabs(elem_id="config-tabs"):
-        # ========== SCORE WEIGHTS TAB ==========
-        with gr.TabItem("Score Weights", id="weights"):
-            _create_weights_section()
+        # Config domain tabs
+        for table_key, table_name in CONFIG_TABLES.items():
+            with gr.TabItem(table_name, id=f"tab-{table_key}"):
+                _create_config_tab(table_key, table_name)
 
-        # ========== THRESHOLDS TAB ==========
-        with gr.TabItem("Thresholds", id="thresholds"):
-            _create_thresholds_section()
+        # History tab
+        with gr.TabItem("History", id="tab-history"):
+            create_history_tab()
 
-        # ========== SCORE PREVIEW TAB ==========
-        with gr.TabItem("Score Preview", id="preview"):
-            _create_preview_section()
-
-        # ========== SIGNAL ANALYSIS TAB ==========
-        with gr.TabItem("Signal Analysis", id="analysis"):
-            _create_analysis_section()
+        # Audit Log tab
+        with gr.TabItem("Audit Log", id="tab-audit"):
+            create_audit_tab()
 
 
-def _create_weights_section() -> (
-    tuple[gr.Slider, gr.Slider, gr.Slider, gr.Slider, gr.Textbox, gr.Plot]
-):
-    """Create score weights configuration section."""
+def _create_config_tab(table_key: str, _table_name: str) -> None:
+    """Create a config tab with lifecycle controls."""
+    # State for this tab
+    current_config = gr.State(value={})
+    is_editing = gr.State(value=False)
+    has_draft = gr.State(value=False)
+
+    # Status bar
     with gr.Row():
-        with gr.Column(scale=1):
-            gr.Markdown("### Factor Weights")
-            gr.Markdown("*Weights must sum to 1.0*")
-
-            wallet_slider = gr.Slider(
-                minimum=0.0,
-                maximum=0.5,
-                value=DEFAULT_WALLET_WEIGHT,
-                step=0.01,
-                label="Wallet Score Weight",
-                info="Win rate, PnL, timing, leader status",
-                elem_id="config-wallet-weight",
-            )
-
-            cluster_slider = gr.Slider(
-                minimum=0.0,
-                maximum=0.5,
-                value=DEFAULT_CLUSTER_WEIGHT,
-                step=0.01,
-                label="Cluster Score Weight",
-                info="Cluster activity amplification",
-                elem_id="config-cluster-weight",
-            )
-
-            token_slider = gr.Slider(
-                minimum=0.0,
-                maximum=0.5,
-                value=DEFAULT_TOKEN_WEIGHT,
-                step=0.01,
-                label="Token Score Weight",
-                info="Liquidity, market cap, holders",
-                elem_id="config-token-weight",
-            )
-
-            context_slider = gr.Slider(
-                minimum=0.0,
-                maximum=0.5,
-                value=DEFAULT_CONTEXT_WEIGHT,
-                step=0.01,
-                label="Context Score Weight",
-                info="Time of day, market conditions",
-                elem_id="config-context-weight",
-            )
-
-            sum_display = gr.Textbox(
-                label="Weight Sum",
-                value="Total: 1.000 (valid)",
-                interactive=False,
-                elem_id="config-weight-sum",
-            )
-
-            with gr.Row():
-                normalize_btn = gr.Button(
-                    "Normalize to 1.0",
-                    variant="secondary",
-                    elem_id="config-normalize-btn",
-                )
-                apply_btn = gr.Button(
-                    "Apply Weights",
-                    variant="primary",
-                    elem_id="config-apply-weights-btn",
-                )
-
-            status_text = gr.Textbox(
-                label="Status",
-                value="",
-                interactive=False,
-                elem_id="config-weights-status",
-            )
-
-        with gr.Column(scale=1):
-            gr.Markdown("### Weight Distribution")
-            weights_chart = gr.Plot(
-                value=create_weights_chart(
-                    DEFAULT_WALLET_WEIGHT,
-                    DEFAULT_CLUSTER_WEIGHT,
-                    DEFAULT_TOKEN_WEIGHT,
-                    DEFAULT_CONTEXT_WEIGHT,
-                ),
-                label="Weight Distribution",
-            )
-
-    # Event handlers
-    for slider in [wallet_slider, cluster_slider, token_slider, context_slider]:
-        slider.change(
-            fn=calculate_sum,
-            inputs=[wallet_slider, cluster_slider, token_slider, context_slider],
-            outputs=[sum_display],
+        status_badge = gr.Textbox(
+            label="Status",
+            value="Loading...",
+            interactive=False,
+            scale=1,
+            elem_id=f"config-{table_key}-status",
+        )
+        version_display = gr.Number(
+            label="Version",
+            value=0,
+            precision=0,
+            interactive=False,
+            scale=1,
+        )
+        last_updated = gr.Textbox(
+            label="Last Updated",
+            value="",
+            interactive=False,
+            scale=2,
         )
 
-    normalize_btn.click(
-        fn=normalize_weights,
-        inputs=[wallet_slider, cluster_slider, token_slider, context_slider],
-        outputs=[
-            wallet_slider,
-            cluster_slider,
-            token_slider,
-            context_slider,
-            status_text,
-            weights_chart,
-        ],
-    )
+    # Config content based on table type
+    if table_key == "trading":
+        fields = _create_trading_fields()
+    elif table_key == "scoring":
+        fields = _create_scoring_fields()
+    elif table_key == "discovery":
+        fields = _create_discovery_fields()
+    elif table_key == "cluster":
+        fields = _create_cluster_fields()
+    elif table_key == "risk":
+        fields = _create_risk_fields()
+    elif table_key == "exit":
+        fields = _create_exit_fields()
+    elif table_key == "api":
+        fields = _create_api_fields()
+    else:
+        fields = {}
 
-    apply_btn.click(
-        fn=update_weights,
-        inputs=[wallet_slider, cluster_slider, token_slider, context_slider],
-        outputs=[status_text, weights_chart],
-    )
-
-    return wallet_slider, cluster_slider, token_slider, context_slider, status_text, weights_chart
-
-
-def _create_thresholds_section() -> None:
-    """Create threshold configuration section."""
-    gr.Markdown("### Signal Score Thresholds")
-    gr.Markdown(
-        "Signals must meet the minimum score threshold to be eligible for trading."
-    )
-
+    # Action buttons
     with gr.Row():
-        with gr.Column():
-            trade_threshold_slider = gr.Slider(
-                minimum=0.5,
-                maximum=0.9,
-                value=DEFAULT_TRADE_THRESHOLD,
-                step=0.01,
-                label="Minimum Trade Threshold",
-                info="Signals below this score will not trigger trades",
-                elem_id="config-trade-threshold",
-            )
+        edit_btn = gr.Button(
+            "Edit",
+            variant="secondary",
+            elem_id=f"config-{table_key}-edit",
+        )
+        save_btn = gr.Button(
+            "Save Draft",
+            variant="primary",
+            visible=False,
+            elem_id=f"config-{table_key}-save",
+        )
+        discard_btn = gr.Button(
+            "Discard",
+            variant="stop",
+            visible=False,
+            elem_id=f"config-{table_key}-discard",
+        )
+        activate_btn = gr.Button(
+            "Activate",
+            variant="primary",
+            visible=False,
+            elem_id=f"config-{table_key}-activate",
+        )
+        refresh_btn = gr.Button(
+            "Refresh",
+            variant="secondary",
+            elem_id=f"config-{table_key}-refresh",
+        )
 
-            high_conviction_slider = gr.Slider(
-                minimum=0.7,
-                maximum=0.95,
-                value=DEFAULT_HIGH_CONVICTION_THRESHOLD,
-                step=0.01,
-                label="High Conviction Threshold",
-                info="Signals above this get 1.5x position size",
-                elem_id="config-high-conviction",
-            )
-
-            with gr.Row():
-                threshold_apply_btn = gr.Button(
-                    "Apply Thresholds",
-                    variant="primary",
-                    elem_id="config-apply-threshold-btn",
-                )
-                gr.Button(
-                    "Reset All to Defaults",
-                    variant="secondary",
-                    elem_id="config-reset-btn",
-                )
-
-            threshold_status = gr.Textbox(
-                label="Status",
-                value="",
-                interactive=False,
-                elem_id="config-threshold-status",
-            )
-
-        with gr.Column():
-            gr.Markdown("### Position Sizing Tiers")
-            gr.Markdown("""
-| Score Range | Conviction | Position Size |
-|-------------|------------|---------------|
-| >= 0.85 | High | 1.5x base |
-| 0.70 - 0.84 | Standard | 1.0x base |
-| < 0.70 | None | No Trade |
-""")
-
-    threshold_apply_btn.click(
-        fn=update_threshold,
-        inputs=[trade_threshold_slider, high_conviction_slider],
-        outputs=[threshold_status],
-    )
-
-    # Note: Reset needs to output to weight sliders too
-    # This is simplified - full implementation would need shared state
-
-
-def _create_preview_section() -> None:
-    """Create score preview/calculator section."""
-    gr.Markdown("### Score Calculator")
-    gr.Markdown("Test how different inputs affect the final score.")
-
-    with gr.Row():
-        with gr.Column():
-            gr.Markdown("#### Wallet Factors")
-            win_rate = gr.Slider(0, 1, value=0.6, label="Win Rate")
-            pnl = gr.Slider(-100, 500, value=50, label="Avg PnL %")
-            timing = gr.Slider(0, 1, value=0.5, label="Timing Percentile")
-            is_leader = gr.Checkbox(label="Is Cluster Leader")
-
-        with gr.Column():
-            gr.Markdown("#### Token/Cluster Factors")
-            cluster_size = gr.Slider(1, 20, value=1, step=1, label="Cluster Size")
-            liquidity = gr.Slider(0, 100000, value=10000, label="Liquidity USD")
-            market_cap = gr.Slider(0, 1000000, value=100000, label="Market Cap USD")
-            age_minutes = gr.Slider(0, 60, value=30, label="Token Age (minutes)")
-
-    calculate_btn = gr.Button("Calculate Preview Score", variant="primary")
-    result_display = gr.Markdown("")
-
-    calculate_btn.click(
-        fn=calculate_preview_score,
-        inputs=[
-            win_rate,
-            pnl,
-            timing,
-            is_leader,
-            cluster_size,
-            liquidity,
-            market_cap,
-            age_minutes,
-        ],
-        outputs=[result_display],
-    )
-
-
-def _create_analysis_section() -> None:
-    """Create signal analysis section."""
-    gr.Markdown("### Recent Signal Scores")
-    gr.Markdown("Analyze score distribution of recent signals.")
-
-    refresh_signals_btn = gr.Button("Refresh", variant="secondary")
-
-    signal_table = gr.Dataframe(
-        headers=[
-            "Time",
-            "Wallet",
-            "Token",
-            "Score",
-            "Wallet",
-            "Cluster",
-            "Token",
-            "Context",
-            "Status",
-        ],
-        label="Recent Signals",
+    # Status message
+    status_msg = gr.Textbox(
+        label="",
+        value="",
         interactive=False,
-        elem_id="config-signals-table",
+        visible=False,
+        elem_id=f"config-{table_key}-msg",
     )
 
-    refresh_signals_btn.click(
-        fn=fetch_recent_signals,
-        outputs=[signal_table],
+    # Wire up events
+    _wire_tab_events(
+        table_key=table_key,
+        fields=fields,
+        status_badge=status_badge,
+        version_display=version_display,
+        last_updated=last_updated,
+        current_config=current_config,
+        is_editing=is_editing,
+        has_draft=has_draft,
+        edit_btn=edit_btn,
+        save_btn=save_btn,
+        discard_btn=discard_btn,
+        activate_btn=activate_btn,
+        refresh_btn=refresh_btn,
+        status_msg=status_msg,
+    )
+
+
+def _create_trading_fields() -> dict[str, Any]:
+    """Create trading configuration fields."""
+    fields = {}
+
+    gr.Markdown("### Position Sizing")
+    with gr.Row():
+        fields["base_position_pct"] = gr.Number(
+            label="Base Position %",
+            info="Percentage of capital per trade",
+            precision=2,
+            interactive=False,
+        )
+        fields["max_position_sol"] = gr.Number(
+            label="Max Position (SOL)",
+            info="Maximum position size",
+            precision=4,
+            interactive=False,
+        )
+        fields["min_position_sol"] = gr.Number(
+            label="Min Position (SOL)",
+            info="Minimum position size",
+            precision=4,
+            interactive=False,
+        )
+
+    with gr.Row():
+        fields["sizing_mode"] = gr.Dropdown(
+            choices=["risk_based", "fixed_percent"],
+            label="Sizing Mode",
+            interactive=False,
+        )
+        fields["risk_per_trade_pct"] = gr.Number(
+            label="Risk Per Trade %",
+            info="For risk-based sizing",
+            precision=2,
+            interactive=False,
+        )
+        fields["high_conviction_mult"] = gr.Number(
+            label="High Conviction Multiplier",
+            precision=2,
+            interactive=False,
+        )
+
+    gr.Markdown("### Thresholds")
+    with gr.Row():
+        fields["score_threshold"] = gr.Number(
+            label="Score Threshold",
+            info="Minimum score to trade",
+            precision=3,
+            interactive=False,
+        )
+        fields["high_conviction_threshold"] = gr.Number(
+            label="High Conviction Threshold",
+            info="Score for high conviction",
+            precision=3,
+            interactive=False,
+        )
+
+    gr.Markdown("### Limits")
+    with gr.Row():
+        fields["max_concurrent"] = gr.Number(
+            label="Max Concurrent Positions",
+            precision=0,
+            interactive=False,
+        )
+        fields["daily_loss_limit"] = gr.Number(
+            label="Daily Loss Limit %",
+            precision=2,
+            interactive=False,
+        )
+        fields["daily_loss_enabled"] = gr.Checkbox(
+            label="Daily Loss Limit Enabled",
+            interactive=False,
+        )
+
+    gr.Markdown("### Concentration Limits")
+    with gr.Row():
+        fields["max_token_pct"] = gr.Number(
+            label="Max Token %",
+            precision=2,
+            interactive=False,
+        )
+        fields["max_cluster_pct"] = gr.Number(
+            label="Max Cluster %",
+            precision=2,
+            interactive=False,
+        )
+        fields["max_pos_per_cluster"] = gr.Number(
+            label="Max Positions/Cluster",
+            precision=0,
+            interactive=False,
+        )
+
+    gr.Markdown("### Slippage")
+    with gr.Row():
+        fields["slippage_entry_bps"] = gr.Number(
+            label="Entry Slippage (bps)",
+            precision=0,
+            interactive=False,
+        )
+        fields["slippage_exit_bps"] = gr.Number(
+            label="Exit Slippage (bps)",
+            precision=0,
+            interactive=False,
+        )
+
+    return fields
+
+
+def _create_scoring_fields() -> dict[str, Any]:
+    """Create scoring configuration fields."""
+    fields = {}
+
+    gr.Markdown("### Score Weights")
+    with gr.Row():
+        fields["wallet_weight"] = gr.Number(
+            label="Wallet Weight",
+            precision=3,
+            interactive=False,
+        )
+        fields["cluster_weight"] = gr.Number(
+            label="Cluster Weight",
+            precision=3,
+            interactive=False,
+        )
+        fields["token_weight"] = gr.Number(
+            label="Token Weight",
+            precision=3,
+            interactive=False,
+        )
+        fields["context_weight"] = gr.Number(
+            label="Context Weight",
+            precision=3,
+            interactive=False,
+        )
+
+    gr.Markdown("### Wallet Scoring")
+    with gr.Row():
+        fields["win_rate_weight"] = gr.Number(
+            label="Win Rate Weight",
+            precision=3,
+            interactive=False,
+        )
+        fields["avg_pnl_weight"] = gr.Number(
+            label="Avg PnL Weight",
+            precision=3,
+            interactive=False,
+        )
+        fields["consistency_weight"] = gr.Number(
+            label="Consistency Weight",
+            precision=3,
+            interactive=False,
+        )
+
+    gr.Markdown("### Thresholds")
+    with gr.Row():
+        fields["trade_threshold"] = gr.Number(
+            label="Trade Threshold",
+            info="Minimum score to trade",
+            precision=3,
+            interactive=False,
+        )
+        fields["high_conviction_threshold"] = gr.Number(
+            label="High Conviction Threshold",
+            precision=3,
+            interactive=False,
+        )
+
+    return fields
+
+
+def _create_discovery_fields() -> dict[str, Any]:
+    """Create discovery configuration fields."""
+    fields = {}
+
+    gr.Markdown("### Discovery Runs")
+    with gr.Row():
+        fields["run_interval_minutes"] = gr.Number(
+            label="Run Interval (min)",
+            precision=0,
+            interactive=False,
+        )
+        fields["max_wallets_per_run"] = gr.Number(
+            label="Max Wallets/Run",
+            precision=0,
+            interactive=False,
+        )
+        fields["min_wallet_age_days"] = gr.Number(
+            label="Min Wallet Age (days)",
+            precision=0,
+            interactive=False,
+        )
+
+    gr.Markdown("### Wallet Criteria")
+    with gr.Row():
+        fields["min_win_rate"] = gr.Number(
+            label="Min Win Rate",
+            precision=3,
+            interactive=False,
+        )
+        fields["min_trades"] = gr.Number(
+            label="Min Trades",
+            precision=0,
+            interactive=False,
+        )
+        fields["min_avg_pnl_pct"] = gr.Number(
+            label="Min Avg PnL %",
+            precision=2,
+            interactive=False,
+        )
+
+    gr.Markdown("### Token Filters")
+    with gr.Row():
+        fields["min_price_change_pct"] = gr.Number(
+            label="Min Price Change %",
+            precision=0,
+            interactive=False,
+        )
+        fields["min_volume_usd"] = gr.Number(
+            label="Min Volume USD",
+            precision=0,
+            interactive=False,
+        )
+        fields["max_tokens"] = gr.Number(
+            label="Max Tokens to Analyze",
+            precision=0,
+            interactive=False,
+        )
+
+    return fields
+
+
+def _create_cluster_fields() -> dict[str, Any]:
+    """Create cluster configuration fields."""
+    fields = {}
+
+    gr.Markdown("### Clustering")
+    with gr.Row():
+        fields["min_cluster_size"] = gr.Number(
+            label="Min Cluster Size",
+            precision=0,
+            interactive=False,
+        )
+        fields["max_cluster_size"] = gr.Number(
+            label="Max Cluster Size",
+            precision=0,
+            interactive=False,
+        )
+        fields["similarity_threshold"] = gr.Number(
+            label="Similarity Threshold",
+            precision=3,
+            interactive=False,
+        )
+
+    gr.Markdown("### Sync Detection")
+    with gr.Row():
+        fields["sync_window_minutes"] = gr.Number(
+            label="Sync Window (min)",
+            precision=0,
+            interactive=False,
+        )
+        fields["token_overlap_threshold"] = gr.Number(
+            label="Token Overlap Threshold",
+            precision=3,
+            interactive=False,
+        )
+        fields["min_sync_trades"] = gr.Number(
+            label="Min Sync Trades",
+            precision=0,
+            interactive=False,
+        )
+
+    gr.Markdown("### Scoring")
+    with gr.Row():
+        fields["leader_bonus"] = gr.Number(
+            label="Leader Bonus",
+            precision=3,
+            interactive=False,
+        )
+        fields["cluster_score_boost"] = gr.Number(
+            label="Cluster Score Boost",
+            precision=3,
+            interactive=False,
+        )
+
+    return fields
+
+
+def _create_risk_fields() -> dict[str, Any]:
+    """Create risk configuration fields."""
+    fields = {}
+
+    gr.Markdown("### Circuit Breaker")
+    with gr.Row():
+        fields["circuit_breaker_enabled"] = gr.Checkbox(
+            label="Enabled",
+            interactive=False,
+        )
+        fields["loss_threshold_pct"] = gr.Number(
+            label="Loss Threshold %",
+            precision=2,
+            interactive=False,
+        )
+        fields["cooldown_minutes"] = gr.Number(
+            label="Cooldown (min)",
+            precision=0,
+            interactive=False,
+        )
+
+    gr.Markdown("### Drawdown")
+    with gr.Row():
+        fields["max_drawdown_pct"] = gr.Number(
+            label="Max Drawdown %",
+            precision=2,
+            interactive=False,
+        )
+        fields["drawdown_lookback_days"] = gr.Number(
+            label="Lookback (days)",
+            precision=0,
+            interactive=False,
+        )
+        fields["size_reduction_enabled"] = gr.Checkbox(
+            label="Size Reduction Enabled",
+            interactive=False,
+        )
+
+    gr.Markdown("### Order Retry")
+    with gr.Row():
+        fields["max_retry_attempts"] = gr.Number(
+            label="Max Attempts",
+            precision=0,
+            interactive=False,
+        )
+        fields["base_retry_delay_s"] = gr.Number(
+            label="Base Delay (s)",
+            precision=0,
+            interactive=False,
+        )
+        fields["retry_delay_multiplier"] = gr.Number(
+            label="Delay Multiplier",
+            precision=2,
+            interactive=False,
+        )
+
+    gr.Markdown("### Daily Limits")
+    with gr.Row():
+        fields["daily_loss_limit_pct"] = gr.Number(
+            label="Daily Loss Limit %",
+            precision=2,
+            interactive=False,
+        )
+        fields["daily_trade_limit"] = gr.Number(
+            label="Max Trades/Day",
+            precision=0,
+            interactive=False,
+        )
+
+    return fields
+
+
+def _create_exit_fields() -> dict[str, Any]:
+    """Create exit strategy configuration fields."""
+    fields = {}
+
+    gr.Markdown("### Default Strategy Assignments")
+    with gr.Row():
+        fields["standard_strategy"] = gr.Textbox(
+            label="Standard Strategy",
+            interactive=False,
+        )
+        fields["high_conviction_strategy"] = gr.Textbox(
+            label="High Conviction Strategy",
+            interactive=False,
+        )
+
+    gr.Markdown("### Time Limits")
+    with gr.Row():
+        fields["max_hold_hours"] = gr.Number(
+            label="Max Hold (hours)",
+            precision=0,
+            interactive=False,
+        )
+        fields["stagnation_hours"] = gr.Number(
+            label="Stagnation (hours)",
+            precision=0,
+            interactive=False,
+        )
+        fields["stagnation_threshold_pct"] = gr.Number(
+            label="Stagnation %",
+            precision=2,
+            interactive=False,
+        )
+
+    gr.Markdown("### Price History")
+    with gr.Row():
+        fields["collection_interval_s"] = gr.Number(
+            label="Collection Interval (s)",
+            precision=0,
+            interactive=False,
+        )
+        fields["retention_days"] = gr.Number(
+            label="Retention (days)",
+            precision=0,
+            interactive=False,
+        )
+
+    gr.Markdown("### Stop Loss / Take Profit")
+    with gr.Row():
+        fields["default_stop_loss_pct"] = gr.Number(
+            label="Default Stop Loss %",
+            precision=2,
+            interactive=False,
+        )
+        fields["default_take_profit_pct"] = gr.Number(
+            label="Default Take Profit %",
+            precision=2,
+            interactive=False,
+        )
+        fields["trailing_stop_enabled"] = gr.Checkbox(
+            label="Trailing Stop Enabled",
+            interactive=False,
+        )
+
+    return fields
+
+
+def _create_api_fields() -> dict[str, Any]:
+    """Create API configuration fields."""
+    fields = {}
+
+    gr.Markdown("### Rate Limits (requests/min)")
+    with gr.Row():
+        fields["dexscreener_rpm"] = gr.Number(
+            label="DexScreener",
+            precision=0,
+            interactive=False,
+        )
+        fields["birdeye_rpm"] = gr.Number(
+            label="Birdeye",
+            precision=0,
+            interactive=False,
+        )
+        fields["jupiter_rpm"] = gr.Number(
+            label="Jupiter",
+            precision=0,
+            interactive=False,
+        )
+        fields["helius_rpm"] = gr.Number(
+            label="Helius",
+            precision=0,
+            interactive=False,
+        )
+
+    gr.Markdown("### Timeouts")
+    with gr.Row():
+        fields["api_timeout_s"] = gr.Number(
+            label="API Timeout (s)",
+            precision=0,
+            interactive=False,
+        )
+        fields["rpc_timeout_s"] = gr.Number(
+            label="RPC Timeout (s)",
+            precision=0,
+            interactive=False,
+        )
+
+    gr.Markdown("### Caching")
+    with gr.Row():
+        fields["price_cache_ttl_s"] = gr.Number(
+            label="Price Cache TTL (s)",
+            precision=0,
+            interactive=False,
+        )
+        fields["token_info_cache_ttl_s"] = gr.Number(
+            label="Token Info TTL (s)",
+            precision=0,
+            interactive=False,
+        )
+        fields["wallet_cache_ttl_s"] = gr.Number(
+            label="Wallet Cache TTL (s)",
+            precision=0,
+            interactive=False,
+        )
+
+    gr.Markdown("### Retry")
+    with gr.Row():
+        fields["max_retries"] = gr.Number(
+            label="Max Retries",
+            precision=0,
+            interactive=False,
+        )
+        fields["retry_backoff_s"] = gr.Number(
+            label="Retry Backoff (s)",
+            precision=1,
+            interactive=False,
+        )
+
+    return fields
+
+
+def _wire_tab_events(
+    table_key: str,
+    fields: dict[str, gr.components.Component],
+    status_badge: gr.Textbox,
+    version_display: gr.Number,
+    last_updated: gr.Textbox,
+    current_config: gr.State,
+    is_editing: gr.State,
+    has_draft: gr.State,
+    edit_btn: gr.Button,
+    save_btn: gr.Button,
+    discard_btn: gr.Button,
+    activate_btn: gr.Button,
+    refresh_btn: gr.Button,
+    status_msg: gr.Textbox,
+) -> None:
+    """Wire up event handlers for a config tab."""
+
+    def load_and_display():
+        """Load config and return display values."""
+        config = load_config_sync(table_key)
+        if not config:
+            return (
+                "Error loading",
+                0,
+                "",
+                {},
+                False,
+                False,
+                gr.update(visible=True),
+                gr.update(visible=False),
+                gr.update(visible=False),
+                gr.update(visible=False),
+                gr.update(value="Failed to load configuration", visible=True),
+                *[gr.update(value=None) for _ in fields],
+            )
+
+        data = config.get("data", {})
+        status = config.get("status", "unknown")
+        version = config.get("version", 0)
+        updated = config.get("updated_at", "")
+
+        # Update field values
+        field_updates = []
+        for field_name in fields:
+            value = data.get(field_name)
+            field_updates.append(gr.update(value=value))
+
+        is_draft = status == "draft"
+        return (
+            status.capitalize(),
+            version,
+            updated[:19] if updated else "",
+            data,
+            is_draft,
+            is_draft,
+            gr.update(visible=not is_draft),
+            gr.update(visible=is_draft),
+            gr.update(visible=is_draft),
+            gr.update(visible=is_draft),
+            gr.update(value="", visible=False),
+            *field_updates,
+        )
+
+    def enter_edit_mode(_current_cfg: dict, editing: bool, draft: bool):
+        """Enter edit mode - creates draft if needed."""
+        if draft:
+            # Already have a draft, just enable fields
+            return (
+                True,
+                True,
+                gr.update(visible=False),
+                gr.update(visible=True),
+                gr.update(visible=True),
+                gr.update(visible=True),
+                gr.update(value="Editing draft...", visible=True),
+                *[gr.update(interactive=True) for _ in fields],
+            )
+
+        # Create a new draft
+        result = create_draft_sync(table_key)
+        if result:
+            return (
+                True,
+                True,
+                gr.update(visible=False),
+                gr.update(visible=True),
+                gr.update(visible=True),
+                gr.update(visible=True),
+                gr.update(value="Draft created. Make your changes.", visible=True),
+                *[gr.update(interactive=True) for _ in fields],
+            )
+        else:
+            return (
+                editing,
+                draft,
+                gr.update(),
+                gr.update(),
+                gr.update(),
+                gr.update(),
+                gr.update(value="Failed to create draft", visible=True),
+                *[gr.update() for _ in fields],
+            )
+
+    def save_draft_changes(*field_values):
+        """Save current field values to draft."""
+        data = {}
+        for (field_name, _), value in zip(fields.items(), field_values, strict=False):
+            if value is not None:
+                data[field_name] = value
+
+        result = update_draft_sync(table_key, data)
+        if result:
+            return gr.update(value="Draft saved successfully!", visible=True)
+        return gr.update(value="Failed to save draft", visible=True)
+
+    def discard_changes():
+        """Discard draft and reload active config."""
+        success = delete_draft_sync(table_key)
+        if success:
+            # Reload will happen via refresh
+            return (
+                False,
+                False,
+                gr.update(value="Draft discarded", visible=True),
+            )
+        return (
+            gr.update(),
+            gr.update(),
+            gr.update(value="Failed to discard draft", visible=True),
+        )
+
+    def activate_changes():
+        """Activate the draft configuration."""
+        result = activate_draft_sync(table_key)
+        if result:
+            return (
+                False,
+                False,
+                gr.update(value="Configuration activated!", visible=True),
+            )
+        return (
+            gr.update(),
+            gr.update(),
+            gr.update(value="Failed to activate", visible=True),
+        )
+
+    # Initial load on page
+    field_outputs = list(fields.values())
+
+    refresh_btn.click(
+        fn=load_and_display,
+        outputs=[
+            status_badge,
+            version_display,
+            last_updated,
+            current_config,
+            is_editing,
+            has_draft,
+            edit_btn,
+            save_btn,
+            discard_btn,
+            activate_btn,
+            status_msg,
+            *field_outputs,
+        ],
+    )
+
+    edit_btn.click(
+        fn=enter_edit_mode,
+        inputs=[current_config, is_editing, has_draft],
+        outputs=[
+            is_editing,
+            has_draft,
+            edit_btn,
+            save_btn,
+            discard_btn,
+            activate_btn,
+            status_msg,
+            *field_outputs,
+        ],
+    )
+
+    save_btn.click(
+        fn=save_draft_changes,
+        inputs=field_outputs,
+        outputs=[status_msg],
+    )
+
+    discard_btn.click(
+        fn=discard_changes,
+        outputs=[is_editing, has_draft, status_msg],
+    ).then(
+        fn=load_and_display,
+        outputs=[
+            status_badge,
+            version_display,
+            last_updated,
+            current_config,
+            is_editing,
+            has_draft,
+            edit_btn,
+            save_btn,
+            discard_btn,
+            activate_btn,
+            status_msg,
+            *field_outputs,
+        ],
+    )
+
+    activate_btn.click(
+        fn=activate_changes,
+        outputs=[is_editing, has_draft, status_msg],
+    ).then(
+        fn=load_and_display,
+        outputs=[
+            status_badge,
+            version_display,
+            last_updated,
+            current_config,
+            is_editing,
+            has_draft,
+            edit_btn,
+            save_btn,
+            discard_btn,
+            activate_btn,
+            status_msg,
+            *field_outputs,
+        ],
     )

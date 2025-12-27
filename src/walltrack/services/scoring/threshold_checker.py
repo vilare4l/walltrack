@@ -2,7 +2,6 @@
 
 import structlog
 
-from walltrack.constants.threshold import NO_TRADE_MULTIPLIER
 from walltrack.models.scoring import ScoredSignal
 from walltrack.models.threshold import (
     ConvictionTier,
@@ -14,6 +13,9 @@ from walltrack.models.threshold import (
 from walltrack.models.token import TokenCharacteristics
 
 logger = structlog.get_logger(__name__)
+
+# No-trade multiplier (signal below threshold = no position)
+NO_TRADE_MULTIPLIER = 0.0
 
 
 class ThresholdChecker:

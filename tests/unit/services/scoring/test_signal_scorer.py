@@ -428,34 +428,30 @@ class TestContextScoring:
 
 
 class TestScoringConfig:
-    """Tests for scoring configuration."""
+    """Tests for scoring configuration via ConfigService."""
 
     @pytest.mark.asyncio
-    async def test_custom_weights(
+    async def test_default_weights_from_fallback(
         self,
         sample_signal: SignalContext,
         sample_wallet: Wallet,
         sample_token: TokenCharacteristics,
     ):
-        """Test that custom weights are applied."""
-        config = ScoringConfig(
-            weights=ScoringWeights(
-                wallet=0.40,
-                cluster=0.20,
-                token=0.20,
-                context=0.20,
-            )
-        )
-
-        scorer = SignalScorer(config=config)
+        """Test that default weights are applied from ScoringParams.defaults()."""
+        reset_scorer()
+        # Without ConfigService, scorer uses fallback defaults
+        scorer = SignalScorer()
         result = await scorer.score(sample_signal, sample_wallet, sample_token)
 
-        assert result.weights_used.wallet == 0.40
-        assert result.weights_used.cluster == 0.20
+        # Check fallback default weights are applied
+        assert result.weights_used.wallet == 0.30
+        assert result.weights_used.cluster == 0.25
+        assert result.weights_used.token == 0.25
+        assert result.weights_used.context == 0.20
 
     @pytest.mark.asyncio
-    async def test_config_update(self):
-        """Test that config updates are applied."""
+    async def test_update_config_is_deprecated(self):
+        """Test that update_config() is deprecated and logs warning."""
         scorer = SignalScorer()
 
         new_config = ScoringConfig(
@@ -467,10 +463,12 @@ class TestScoringConfig:
             )
         )
 
+        # update_config() should still work but is deprecated
         scorer.update_config(new_config)
 
-        assert scorer.config.weights.wallet == 0.40
-        assert scorer.config.weights.cluster == 0.20
+        # Legacy config is stored but not used for scoring
+        assert scorer._legacy_config is not None
+        assert scorer._legacy_config.weights.wallet == 0.40
 
 
 class TestScoringWeightsValidation:

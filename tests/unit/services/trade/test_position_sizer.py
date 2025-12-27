@@ -9,6 +9,7 @@ from walltrack.models.position_sizing import (
     PositionSizeRequest,
     ConvictionTier,
     SizingDecision,
+    SizingMode,
 )
 
 
@@ -263,3 +264,186 @@ class TestShouldTradeProperty:
 
         assert result.decision == SizingDecision.SKIPPED_LOW_SCORE
         assert result.should_trade is False
+
+
+class TestRiskBasedSizing:
+    """Tests for risk-based position sizing (Story 10.5-8)."""
+
+    @pytest.fixture
+    def risk_based_config(self) -> PositionSizingConfig:
+        """Create risk-based sizing config."""
+        return PositionSizingConfig(
+            sizing_mode=SizingMode.RISK_BASED,
+            risk_per_trade_pct=1.0,  # 1% risk per trade
+            default_stop_loss_pct=10.0,  # 10% stop loss
+            min_position_sol=0.1,
+            max_position_sol=100.0,
+            high_conviction_multiplier=1.5,
+            standard_conviction_multiplier=1.0,
+            high_conviction_threshold=0.85,
+            min_conviction_threshold=0.70,
+            max_concurrent_positions=5,
+            max_capital_allocation_pct=80.0,
+            reserve_sol=0.05,
+        )
+
+    @pytest.fixture
+    def risk_based_sizer(self, risk_based_config: PositionSizingConfig) -> PositionSizer:
+        """Create position sizer with risk-based config."""
+        mock_repo = MagicMock()
+        mock_repo.get_config = AsyncMock(return_value=risk_based_config)
+        mock_repo.save_audit = AsyncMock(return_value="audit-id")
+
+        sizer = PositionSizer(config_repo=mock_repo)
+        sizer._config_cache = risk_based_config
+        return sizer
+
+    async def test_basic_risk_based_calculation(
+        self, risk_based_sizer: PositionSizer
+    ) -> None:
+        """Test: 1% risk on 1000 SOL with 10% SL = 100 SOL position."""
+        request = PositionSizeRequest(
+            signal_score=0.75,  # Standard conviction (1.0x multiplier)
+            available_balance_sol=1000.0,
+            current_position_count=0,
+            current_allocated_sol=0,
+            stop_loss_pct=10.0,  # 10% stop loss
+        )
+
+        result = await risk_based_sizer.calculate_size(request, audit=False)
+
+        # max_risk = 1000 * 1% = 10 SOL
+        # position = 10 / 0.10 = 100 SOL
+        assert result.sizing_mode == SizingMode.RISK_BASED
+        assert result.base_size_sol == pytest.approx(100.0, rel=0.01)
+        assert result.final_size_sol == pytest.approx(100.0, rel=0.01)
+        assert result.risk_amount_sol == pytest.approx(10.0, rel=0.01)  # 100 * 10%
+        assert result.stop_loss_pct_used == 10.0
+        assert result.should_trade
+
+    async def test_tighter_stop_larger_position(
+        self, risk_based_sizer: PositionSizer, risk_based_config: PositionSizingConfig
+    ) -> None:
+        """Test: Tighter SL allows larger position (capped at max)."""
+        # Update max to see the raw calculation
+        risk_based_config.max_position_sol = 500.0
+        risk_based_sizer._config_cache = risk_based_config
+
+        request = PositionSizeRequest(
+            signal_score=0.75,
+            available_balance_sol=1000.0,
+            current_position_count=0,
+            current_allocated_sol=0,
+            stop_loss_pct=5.0,  # Tighter 5% stop loss
+        )
+
+        result = await risk_based_sizer.calculate_size(request, audit=False)
+
+        # max_risk = 1000 * 1% = 10 SOL
+        # position = 10 / 0.05 = 200 SOL
+        assert result.base_size_sol == pytest.approx(200.0, rel=0.01)
+        assert result.final_size_sol == pytest.approx(200.0, rel=0.01)
+        assert result.risk_amount_sol == pytest.approx(10.0, rel=0.01)  # Still 10 SOL
+        assert result.stop_loss_pct_used == 5.0
+
+    async def test_wider_stop_smaller_position(
+        self, risk_based_sizer: PositionSizer
+    ) -> None:
+        """Test: Wider SL requires smaller position to maintain risk."""
+        request = PositionSizeRequest(
+            signal_score=0.75,
+            available_balance_sol=1000.0,
+            current_position_count=0,
+            current_allocated_sol=0,
+            stop_loss_pct=20.0,  # Wider 20% stop loss
+        )
+
+        result = await risk_based_sizer.calculate_size(request, audit=False)
+
+        # max_risk = 1000 * 1% = 10 SOL
+        # position = 10 / 0.20 = 50 SOL
+        assert result.base_size_sol == pytest.approx(50.0, rel=0.01)
+        assert result.final_size_sol == pytest.approx(50.0, rel=0.01)
+        assert result.risk_amount_sol == pytest.approx(10.0, rel=0.01)  # Still 10 SOL
+        assert result.stop_loss_pct_used == 20.0
+
+    async def test_high_conviction_multiplier_applied(
+        self, risk_based_sizer: PositionSizer
+    ) -> None:
+        """Test: High conviction applies 1.5x multiplier."""
+        request = PositionSizeRequest(
+            signal_score=0.90,  # High conviction
+            available_balance_sol=1000.0,
+            current_position_count=0,
+            current_allocated_sol=0,
+            stop_loss_pct=10.0,
+        )
+
+        result = await risk_based_sizer.calculate_size(request, audit=False)
+
+        # max_risk = 1000 * 1% = 10 SOL
+        # base position = 10 / 0.10 = 100 SOL
+        # with 1.5x multiplier = 150 SOL (but capped at 100 by max_position)
+        assert result.multiplier == 1.5
+        assert result.calculated_size_sol == pytest.approx(150.0, rel=0.01)
+        assert result.final_size_sol == pytest.approx(100.0, rel=0.01)  # Capped
+        assert result.reduction_applied is True
+
+    async def test_max_position_cap(
+        self, risk_based_sizer: PositionSizer, risk_based_config: PositionSizingConfig
+    ) -> None:
+        """Test: Position capped at max_position_sol."""
+        risk_based_config.max_position_sol = 50.0
+        risk_based_sizer._config_cache = risk_based_config
+
+        request = PositionSizeRequest(
+            signal_score=0.75,
+            available_balance_sol=1000.0,
+            current_position_count=0,
+            current_allocated_sol=0,
+            stop_loss_pct=10.0,
+        )
+
+        result = await risk_based_sizer.calculate_size(request, audit=False)
+
+        # base position = 100 SOL, capped at 50
+        assert result.base_size_sol == pytest.approx(100.0, rel=0.01)
+        assert result.final_size_sol == pytest.approx(50.0, rel=0.01)
+        assert result.reduction_applied is True
+        assert "max_position_sol" in str(result.reduction_reason)
+
+    async def test_uses_default_stop_loss_when_not_provided(
+        self, risk_based_sizer: PositionSizer
+    ) -> None:
+        """Test: Uses config default_stop_loss_pct when not in request."""
+        request = PositionSizeRequest(
+            signal_score=0.75,
+            available_balance_sol=1000.0,
+            current_position_count=0,
+            current_allocated_sol=0,
+            # stop_loss_pct not provided, should use default 10%
+        )
+
+        result = await risk_based_sizer.calculate_size(request, audit=False)
+
+        assert result.stop_loss_pct_used == 10.0  # Default
+        assert result.base_size_sol == pytest.approx(100.0, rel=0.01)
+
+    async def test_fixed_percent_mode_ignores_stop_loss(
+        self, position_sizer: PositionSizer
+    ) -> None:
+        """Test: Fixed percent mode ignores stop_loss_pct."""
+        request = PositionSizeRequest(
+            signal_score=0.75,
+            available_balance_sol=10.0,
+            current_position_count=0,
+            current_allocated_sol=0,
+            stop_loss_pct=5.0,  # Should be ignored in fixed_percent mode
+        )
+
+        result = await position_sizer.calculate_size(request, audit=False)
+
+        # Fixed percent uses base_position_pct, not risk calculation
+        assert result.sizing_mode == SizingMode.FIXED_PERCENT
+        # Should use same calculation as before stop_loss was added
+        assert result.base_size_sol == pytest.approx(0.10, rel=0.01)
