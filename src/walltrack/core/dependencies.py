@@ -25,7 +25,7 @@ class ServiceContainer:
     """
 
     _instance: Optional["ServiceContainer"] = None
-    _config_service: Optional[ConfigService] = None
+    _config_service: ConfigService | None = None
     _initialized: bool = False
 
     @classmethod

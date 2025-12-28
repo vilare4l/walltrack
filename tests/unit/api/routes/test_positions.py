@@ -8,7 +8,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from walltrack.api.routes.positions import analysis_router, router
+from walltrack.api.routes.positions import router
 
 
 @pytest.fixture
@@ -16,7 +16,6 @@ def app() -> FastAPI:
     """Create test FastAPI app."""
     app = FastAPI()
     app.include_router(router, prefix="/api")
-    app.include_router(analysis_router, prefix="/api")
     return app
 
 
@@ -301,71 +300,6 @@ class TestChangeStrategy:
         assert "active" in response.json()["detail"].lower()
 
 
-class TestSimulatePosition:
-    """Tests for POST /positions/{id}/simulate endpoint."""
-
-    def test_simulate_success(
-        self,
-        client: TestClient,
-    ) -> None:
-        """Test successful simulation."""
-        mock_result = MagicMock()
-        mock_result.position_id = "pos-123"
-        mock_result.entry_price = Decimal("1.0")
-        mock_result.actual_exit_price = Decimal("1.5")
-        mock_result.actual_pnl_pct = Decimal("50.0")
-        mock_result.best_strategy_id = "strat-1"
-        mock_result.best_strategy_name = "Best Strategy"
-        mock_result.best_improvement_pct = Decimal("10.0")
-
-        row = MagicMock()
-        row.strategy_id = "strat-1"
-        row.strategy_name = "Best Strategy"
-        row.simulated_pnl_pct = Decimal("60.0")
-        row.actual_pnl_pct = Decimal("50.0")
-        row.delta_pct = Decimal("10.0")
-        row.exit_time = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
-        row.exit_types = ["take_profit"]
-        row.is_best = True
-        mock_result.rows = [row]
-
-        mock_comparator = MagicMock()
-        mock_comparator.compare = AsyncMock(return_value=mock_result)
-
-        with patch(
-            "walltrack.api.routes.positions.get_strategy_comparator",
-            new=AsyncMock(return_value=mock_comparator),
-        ):
-            response = client.post(
-                "/api/positions/pos-123/simulate",
-                json={"strategy_ids": ["strat-1"]},
-            )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["position_id"] == "pos-123"
-        assert data["best_strategy_id"] == "strat-1"
-
-    def test_simulate_failure(
-        self,
-        client: TestClient,
-    ) -> None:
-        """Test simulation failure."""
-        mock_comparator = MagicMock()
-        mock_comparator.compare = AsyncMock(return_value=None)
-
-        with patch(
-            "walltrack.api.routes.positions.get_strategy_comparator",
-            new=AsyncMock(return_value=mock_comparator),
-        ):
-            response = client.post(
-                "/api/positions/pos-123/simulate",
-                json={"strategy_ids": ["strat-1"]},
-            )
-
-        assert response.status_code == 400
-
-
 class TestGetTimeline:
     """Tests for GET /positions/{id}/timeline endpoint."""
 
@@ -462,117 +396,3 @@ class TestExportTimeline:
         assert response.status_code == 200
         data = response.json()
         assert data["format"] == "csv"
-
-
-class TestGlobalAnalysis:
-    """Tests for POST /analysis/global endpoint."""
-
-    def test_global_analysis_success(
-        self,
-        client: TestClient,
-    ) -> None:
-        """Test successful global analysis."""
-        mock_result = MagicMock()
-        mock_result.total_positions = 10
-        mock_result.strategies_compared = 3
-        mock_result.analysis_duration_seconds = 2.5
-        mock_result.recommended_strategy_id = "strat-1"
-        mock_result.recommended_strategy_name = "Best Strategy"
-
-        stat = MagicMock()
-        stat.strategy_id = "strat-1"
-        stat.strategy_name = "Best Strategy"
-        stat.positions_analyzed = 10
-        stat.avg_pnl_pct = Decimal("15.0")
-        stat.median_pnl_pct = Decimal("12.0")
-        stat.total_pnl_sol = Decimal("50.0")
-        stat.win_rate_pct = Decimal("70.0")
-        stat.avg_improvement_pct = Decimal("5.0")
-        stat.best_position_id = "pos-1"
-        stat.best_improvement_pct = Decimal("20.0")
-        stat.worst_position_id = "pos-2"
-        stat.worst_improvement_pct = Decimal("-5.0")
-        mock_result.strategy_stats = [stat]
-
-        mock_analyzer = MagicMock()
-        mock_analyzer.analyze = AsyncMock(return_value=mock_result)
-
-        with patch(
-            "walltrack.api.routes.positions.get_global_analyzer",
-            new=AsyncMock(return_value=mock_analyzer),
-        ):
-            response = client.post(
-                "/api/analysis/global",
-                json={"days_back": 30, "limit": 100},
-            )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["total_positions"] == 10
-        assert data["recommended_strategy_id"] == "strat-1"
-
-    def test_global_analysis_no_positions(
-        self,
-        client: TestClient,
-    ) -> None:
-        """Test error when no positions found."""
-        mock_analyzer = MagicMock()
-        mock_analyzer.analyze = AsyncMock(return_value=None)
-
-        with patch(
-            "walltrack.api.routes.positions.get_global_analyzer",
-            new=AsyncMock(return_value=mock_analyzer),
-        ):
-            response = client.post(
-                "/api/analysis/global",
-                json={},
-            )
-
-        assert response.status_code == 400
-
-
-class TestCompareAllStrategies:
-    """Tests for GET /analysis/positions/{id}/compare-all endpoint."""
-
-    def test_compare_all_success(
-        self,
-        client: TestClient,
-    ) -> None:
-        """Test successful comparison of all strategies."""
-        mock_result = MagicMock()
-        mock_result.position_id = "pos-123"
-        mock_result.best_strategy_name = "Best"
-        mock_result.best_improvement_pct = Decimal("10.0")
-        mock_result.entry_price = Decimal("1.0")
-        mock_result.actual_exit_price = Decimal("1.5")
-        mock_result.actual_pnl_pct = Decimal("50.0")
-        mock_result.rows = []
-
-        mock_comparator = MagicMock()
-        mock_comparator.compare_all_active_strategies = AsyncMock(return_value=mock_result)
-
-        with patch(
-            "walltrack.api.routes.positions.get_strategy_comparator",
-            new=AsyncMock(return_value=mock_comparator),
-        ):
-            response = client.get("/api/analysis/positions/pos-123/compare-all")
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["best_strategy"] == "Best"
-
-    def test_compare_all_failure(
-        self,
-        client: TestClient,
-    ) -> None:
-        """Test error when comparison fails."""
-        mock_comparator = MagicMock()
-        mock_comparator.compare_all_active_strategies = AsyncMock(return_value=None)
-
-        with patch(
-            "walltrack.api.routes.positions.get_strategy_comparator",
-            new=AsyncMock(return_value=mock_comparator),
-        ):
-            response = client.get("/api/analysis/positions/invalid/compare-all")
-
-        assert response.status_code == 400

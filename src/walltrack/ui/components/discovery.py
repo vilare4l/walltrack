@@ -43,7 +43,7 @@ async def load_initial_config() -> tuple[
 ]:
     """Load initial configuration values for the UI."""
     config = await fetch_discovery_config()
-    
+
     if not config:
         # Return defaults if config fetch fails
         return (
@@ -58,13 +58,13 @@ async def load_initial_config() -> tuple[
             50.0,  # min_profit
             20,  # max_tokens
         )
-    
+
     # Format next_run and last_run
     next_run_str = _format_datetime(config.get("next_run"))
     last_run_str = _format_datetime(config.get("last_run"))
-    
+
     params = config.get("params", {})
-    
+
     return (
         config.get("enabled", True),
         config.get("schedule_hours", 6),
@@ -539,7 +539,7 @@ def create_discovery_tab() -> None:
                 run_btn,
                 status,
             ) = _create_config_section()
-            
+
             # Add refresh config button
             refresh_config_btn = gr.Button("🔄 Refresh Config", variant="secondary", size="sm")
 

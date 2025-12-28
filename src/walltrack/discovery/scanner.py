@@ -10,6 +10,7 @@ import structlog
 from walltrack.config.settings import get_settings
 from walltrack.data.models.wallet import (
     DiscoveryResult,
+    DiscoverySource,
     TokenLaunch,
     Wallet,
     WalletProfile,
@@ -102,6 +103,9 @@ class WalletDiscoveryScanner:
                             total_trades=wallet_data.get("trades", 1),
                         ),
                         discovery_tokens=[token_launch.mint],
+                        # Epic 14 Story 14-5: Discovery origin tracking
+                        discovery_source=DiscoverySource.PUMP_DISCOVERY,
+                        discovered_from_token=token_launch.mint,
                     )
 
                     # Upsert to Supabase

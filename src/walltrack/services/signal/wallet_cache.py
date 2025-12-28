@@ -1,4 +1,10 @@
-"""In-memory LRU cache for monitored wallet lookups."""
+"""In-memory LRU cache for monitored wallet lookups.
+
+Epic 14 Story 14-5: Simplified cache - no cluster data.
+Cluster data is fetched directly from Neo4j via ClusterService.
+"""
+
+from __future__ import annotations
 
 import asyncio
 from collections import OrderedDict
@@ -21,6 +27,9 @@ class WalletCache:
     In-memory LRU cache for monitored wallet lookups.
 
     Provides O(1) lookups to meet < 50ms requirement.
+
+    Epic 14 Story 14-5: No longer caches cluster data.
+    Cluster info is fetched via ClusterService directly from Neo4j.
     """
 
     def __init__(
@@ -64,14 +73,12 @@ class WalletCache:
                 )
                 self._blacklist_set = {w.address for w in blacklisted}
 
-                # Pre-populate cache with wallet metadata
+                # Pre-populate cache with wallet metadata (NO cluster data)
                 for wallet in active_wallets[: self.max_size]:
                     entry = WalletCacheEntry(
                         wallet_address=wallet.address,
                         is_monitored=True,
                         is_blacklisted=wallet.address in self._blacklist_set,
-                        cluster_id=None,  # TODO: Add cluster integration in Epic 2
-                        is_leader=False,
                         reputation_score=wallet.score,
                         ttl_seconds=self.ttl_seconds,
                     )
@@ -112,12 +119,13 @@ class WalletCache:
             # Check if expired
             if entry.is_expired():
                 await self._refresh_entry(wallet_address)
-                entry = self._cache.get(wallet_address)
+                refreshed_entry = self._cache.get(wallet_address)
+                if refreshed_entry is not None:
+                    entry = refreshed_entry
 
             # Move to end for LRU
-            if entry:
-                self._cache.move_to_end(wallet_address)
-                return entry, True
+            self._cache.move_to_end(wallet_address)
+            return entry, True
 
         # Not in cache but in monitored set - fetch and cache
         if is_monitored:
@@ -146,8 +154,6 @@ class WalletCache:
             wallet_address=wallet_address,
             is_monitored=True,
             is_blacklisted=is_blacklisted,
-            cluster_id=None,  # TODO: Add cluster integration
-            is_leader=False,
             reputation_score=wallet.score if wallet else 0.5,
             ttl_seconds=self.ttl_seconds,
         )
@@ -168,8 +174,6 @@ class WalletCache:
                 wallet_address=wallet_address,
                 is_monitored=True,
                 is_blacklisted=wallet_address in self._blacklist_set,
-                cluster_id=None,
-                is_leader=False,
                 reputation_score=wallet.score,
                 ttl_seconds=self.ttl_seconds,
             )
@@ -204,10 +208,25 @@ class WalletCache:
 _wallet_cache: WalletCache | None = None
 
 
-async def get_wallet_cache(wallet_repo: WalletRepository) -> WalletCache:
-    """Get or create wallet cache singleton."""
+async def get_wallet_cache(
+    wallet_repo: WalletRepository,
+) -> WalletCache:
+    """Get or create wallet cache singleton.
+
+    Args:
+        wallet_repo: Wallet repository for database queries
+
+    Returns:
+        Initialized WalletCache instance
+    """
     global _wallet_cache
     if _wallet_cache is None:
         _wallet_cache = WalletCache(wallet_repo)
         await _wallet_cache.initialize()
     return _wallet_cache
+
+
+async def reset_wallet_cache() -> None:
+    """Reset wallet cache singleton (for testing)."""
+    global _wallet_cache
+    _wallet_cache = None

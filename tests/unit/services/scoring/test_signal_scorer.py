@@ -1,60 +1,56 @@
-"""Unit tests for signal scorer service."""
+"""Unit tests for simplified 2-component signal scorer.
 
-from datetime import UTC, datetime
+Epic 14 Simplification: Tests updated for 2-component scoring model.
+- Token safety: Binary gate (honeypot, freeze, mint)
+- Wallet score: win_rate (60%) + pnl_normalized (40%) + leader_bonus
+- Cluster boost: Direct multiplier 1.0x to 1.8x
+- Single threshold: 0.65
+
+Epic 14 Story 14-5: Tests updated to use ClusterInfo parameter.
+Cluster data is no longer on WalletCacheEntry.
+"""
 
 import pytest
 
-from walltrack.data.models.wallet import Wallet, WalletProfile, WalletStatus
-from walltrack.models.scoring import (
-    ScoredSignal,
-    ScoringConfig,
-    ScoringWeights,
-)
-from walltrack.models.signal_filter import SignalContext
+from walltrack.models.scoring import ScoredSignal, ScoringConfig
+from walltrack.models.signal_filter import WalletCacheEntry
 from walltrack.models.token import TokenCharacteristics, TokenLiquidity, TokenVolume
-from walltrack.services.scoring.signal_scorer import SignalScorer, reset_scorer
+from walltrack.services.cluster import ClusterInfo
+from walltrack.services.scoring.signal_scorer import (
+    SignalScorer,
+    SimpleScoringParams,
+    get_scorer,
+    reset_scorer,
+)
 
 
 @pytest.fixture
-def sample_signal() -> SignalContext:
-    """Sample signal context."""
-    return SignalContext(
+def sample_wallet() -> WalletCacheEntry:
+    """Sample wallet cache entry with good stats.
+
+    Epic 14 Story 14-5: No longer has cluster_id/is_leader.
+    Use ClusterInfo parameter for cluster data.
+    """
+    return WalletCacheEntry(
         wallet_address="Wallet12345678901234567890123456789012",
-        token_address="Token123456789012345678901234567890123",
-        direction="buy",
-        amount_token=1000000,
-        amount_sol=1.0,
-        timestamp=datetime.now(UTC).replace(hour=15),  # Peak hour
-        tx_signature="sig123456789",
-        cluster_id="cluster-1",
-        is_cluster_leader=True,
-        wallet_reputation=0.8,
+        reputation_score=0.75,
     )
 
 
 @pytest.fixture
-def sample_wallet() -> Wallet:
-    """Sample wallet with good stats."""
-    return Wallet(
-        address="Wallet12345678901234567890123456789012",
-        status=WalletStatus.ACTIVE,
-        score=0.75,
-        profile=WalletProfile(
-            win_rate=0.75,
-            total_pnl=1500.0,
-            avg_pnl_per_trade=150.0,
-            total_trades=25,
-            timing_percentile=0.85,
-            avg_hold_time_hours=2.5,
-        ),
-        consecutive_losses=0,
-        rolling_win_rate=0.72,
+def sample_cluster_info() -> ClusterInfo:
+    """Sample cluster info for tests."""
+    return ClusterInfo(
+        cluster_id="cluster-1",
+        is_leader=False,
+        amplification_factor=1.0,
+        cluster_size=3,
     )
 
 
 @pytest.fixture
 def sample_token() -> TokenCharacteristics:
-    """Sample token with good characteristics."""
+    """Sample safe token with good characteristics."""
     return TokenCharacteristics(
         token_address="Token123456789012345678901234567890123",
         name="Good Token",
@@ -66,6 +62,9 @@ def sample_token() -> TokenCharacteristics:
         holder_count=250,
         age_minutes=60,
         is_new_token=False,
+        is_honeypot=False,
+        has_freeze_authority=False,
+        has_mint_authority=False,
     )
 
 
@@ -77,482 +76,617 @@ def reset_scorer_fixture():
     reset_scorer()
 
 
-class TestSignalScorerBasic:
-    """Basic scoring tests."""
+class TestSimpleScoringParams:
+    """Tests for SimpleScoringParams dataclass."""
 
-    @pytest.mark.asyncio
-    async def test_score_produces_valid_result(
+    def test_from_config(self):
+        """Test creating params from config."""
+        config = ScoringConfig(
+            trade_threshold=0.70,
+            leader_bonus=1.20,
+        )
+        params = SimpleScoringParams.from_config(config)
+
+        assert params.trade_threshold == 0.70
+        assert params.leader_bonus == 1.20
+
+    def test_defaults(self):
+        """Test default params creation."""
+        params = SimpleScoringParams.defaults()
+
+        assert params.trade_threshold == 0.65
+        assert params.wallet_win_rate_weight == 0.6
+        assert params.wallet_pnl_weight == 0.4
+        assert params.leader_bonus == 1.15
+
+
+class TestTokenSafetyGate:
+    """Tests for binary token safety check."""
+
+    def test_safe_token_passes(
         self,
-        sample_signal: SignalContext,
-        sample_wallet: Wallet,
+        sample_wallet: WalletCacheEntry,
         sample_token: TokenCharacteristics,
     ):
-        """Test that scoring produces valid result."""
+        """Test that safe token passes gate."""
         scorer = SignalScorer()
-        result = await scorer.score(sample_signal, sample_wallet, sample_token)
+        result = scorer.score(
+            wallet=sample_wallet,
+            token=sample_token,
+            tx_signature="sig123",
+            direction="buy",
+        )
 
-        assert isinstance(result, ScoredSignal)
-        assert 0.0 <= result.final_score <= 1.0
-        assert result.wallet_score.score > 0
-        assert result.token_score.score > 0
+        assert result.token_safe is True
+        assert result.token_reject_reason is None
+        assert result.final_score > 0
 
-    @pytest.mark.asyncio
-    async def test_weights_sum_to_one(
+    def test_honeypot_rejected(
         self,
-        sample_signal: SignalContext,
-        sample_wallet: Wallet,
+        sample_wallet: WalletCacheEntry,
         sample_token: TokenCharacteristics,
     ):
-        """Test that weights sum to 1.0."""
+        """Test that honeypot token is rejected."""
+        sample_token.is_honeypot = True
         scorer = SignalScorer()
-        result = await scorer.score(sample_signal, sample_wallet, sample_token)
+        result = scorer.score(
+            wallet=sample_wallet,
+            token=sample_token,
+            tx_signature="sig123",
+            direction="buy",
+        )
 
-        weights = result.weights_used
-        total = weights.wallet + weights.cluster + weights.token + weights.context
-        assert abs(total - 1.0) < 0.001
+        assert result.token_safe is False
+        assert result.token_reject_reason == "honeypot"
+        assert result.final_score == 0.0
+        assert result.should_trade is False
 
-    @pytest.mark.asyncio
-    async def test_scoring_time_recorded(
+    def test_freeze_authority_rejected(
         self,
-        sample_signal: SignalContext,
-        sample_wallet: Wallet,
+        sample_wallet: WalletCacheEntry,
         sample_token: TokenCharacteristics,
     ):
-        """Test that scoring time is recorded."""
+        """Test that freeze authority token is rejected."""
+        sample_token.has_freeze_authority = True
         scorer = SignalScorer()
-        result = await scorer.score(sample_signal, sample_wallet, sample_token)
+        result = scorer.score(
+            wallet=sample_wallet,
+            token=sample_token,
+            tx_signature="sig123",
+            direction="buy",
+        )
 
-        assert result.scoring_time_ms > 0
+        assert result.token_safe is False
+        assert result.token_reject_reason == "freeze_authority"
+        assert result.final_score == 0.0
+
+    def test_mint_authority_rejected(
+        self,
+        sample_wallet: WalletCacheEntry,
+        sample_token: TokenCharacteristics,
+    ):
+        """Test that mint authority token is rejected."""
+        sample_token.has_mint_authority = True
+        scorer = SignalScorer()
+        result = scorer.score(
+            wallet=sample_wallet,
+            token=sample_token,
+            tx_signature="sig123",
+            direction="buy",
+        )
+
+        assert result.token_safe is False
+        assert result.token_reject_reason == "mint_authority"
+        assert result.final_score == 0.0
 
 
 class TestWalletScoring:
-    """Tests for wallet score calculation (AC2)."""
+    """Tests for wallet score calculation."""
 
-    @pytest.mark.asyncio
-    async def test_leader_bonus_applied(
+    def test_high_reputation_gives_high_score(
         self,
-        sample_signal: SignalContext,
-        sample_wallet: Wallet,
+        sample_wallet: WalletCacheEntry,
+        sample_token: TokenCharacteristics,
+    ):
+        """Test that high reputation gives high wallet score."""
+        sample_wallet.reputation_score = 0.9
+        scorer = SignalScorer()
+        result = scorer.score(
+            wallet=sample_wallet,
+            token=sample_token,
+            tx_signature="sig123",
+            direction="buy",
+        )
+
+        # Expected: 0.9 * 0.6 + 0.5 * 0.4 = 0.54 + 0.20 = 0.74
+        assert result.wallet_score > 0.7
+
+    def test_low_reputation_gives_low_score(
+        self,
+        sample_wallet: WalletCacheEntry,
+        sample_token: TokenCharacteristics,
+    ):
+        """Test that low reputation gives low wallet score."""
+        sample_wallet.reputation_score = 0.2
+        scorer = SignalScorer()
+        result = scorer.score(
+            wallet=sample_wallet,
+            token=sample_token,
+            tx_signature="sig123",
+            direction="buy",
+        )
+
+        # Expected: 0.2 * 0.6 + 0.5 * 0.4 = 0.12 + 0.20 = 0.32
+        assert result.wallet_score < 0.4
+
+    def test_leader_bonus_increases_score(
+        self,
+        sample_wallet: WalletCacheEntry,
         sample_token: TokenCharacteristics,
     ):
         """Test that leader bonus increases wallet score."""
         scorer = SignalScorer()
 
-        # Score with leader status
-        sample_signal.is_cluster_leader = True
-        result_leader = await scorer.score(sample_signal, sample_wallet, sample_token)
-
-        # Score without leader status
-        sample_signal.is_cluster_leader = False
-        result_no_leader = await scorer.score(
-            sample_signal, sample_wallet, sample_token
+        # Non-leader (via ClusterInfo)
+        cluster_info_no_leader = ClusterInfo(
+            cluster_id="c1", is_leader=False, amplification_factor=1.0, cluster_size=3
+        )
+        result_no_leader = scorer.score(
+            wallet=sample_wallet,
+            token=sample_token,
+            tx_signature="sig123",
+            direction="buy",
+            cluster_info=cluster_info_no_leader,
         )
 
-        assert result_leader.wallet_score.score > result_no_leader.wallet_score.score
-        assert result_leader.wallet_components.leader_bonus > 0
-        assert result_no_leader.wallet_components.leader_bonus == 0
-
-    @pytest.mark.asyncio
-    async def test_decay_penalty_applied(
-        self,
-        sample_signal: SignalContext,
-        sample_wallet: Wallet,
-        sample_token: TokenCharacteristics,
-    ):
-        """Test that decay penalty reduces wallet score."""
-        scorer = SignalScorer()
-
-        # Score without decay
-        sample_wallet.status = WalletStatus.ACTIVE
-        result_normal = await scorer.score(sample_signal, sample_wallet, sample_token)
-
-        # Score with decay
-        sample_wallet.status = WalletStatus.DECAY_DETECTED
-        result_decayed = await scorer.score(sample_signal, sample_wallet, sample_token)
-
-        assert result_decayed.wallet_score.score < result_normal.wallet_score.score
-        assert result_decayed.wallet_components.decay_penalty > 0
-        assert result_normal.wallet_components.decay_penalty == 0
-
-    @pytest.mark.asyncio
-    async def test_high_win_rate_increases_score(
-        self,
-        sample_signal: SignalContext,
-        sample_wallet: Wallet,
-        sample_token: TokenCharacteristics,
-    ):
-        """Test that high win rate increases wallet score."""
-        scorer = SignalScorer()
-
-        # High win rate
-        sample_wallet.profile.win_rate = 0.9
-        result_high = await scorer.score(sample_signal, sample_wallet, sample_token)
-
-        # Low win rate
-        sample_wallet.profile.win_rate = 0.3
-        result_low = await scorer.score(sample_signal, sample_wallet, sample_token)
-
-        assert result_high.wallet_score.score > result_low.wallet_score.score
-
-    @pytest.mark.asyncio
-    async def test_timing_percentile_affects_score(
-        self,
-        sample_signal: SignalContext,
-        sample_wallet: Wallet,
-        sample_token: TokenCharacteristics,
-    ):
-        """Test that timing percentile affects wallet score."""
-        scorer = SignalScorer()
-
-        # Early timer (high percentile)
-        sample_wallet.profile.timing_percentile = 0.95
-        result_early = await scorer.score(sample_signal, sample_wallet, sample_token)
-
-        # Late timer (low percentile)
-        sample_wallet.profile.timing_percentile = 0.2
-        result_late = await scorer.score(sample_signal, sample_wallet, sample_token)
-
-        assert result_early.wallet_score.score > result_late.wallet_score.score
-
-
-class TestClusterScoring:
-    """Tests for cluster score calculation (AC3)."""
-
-    @pytest.mark.asyncio
-    async def test_solo_signal_gets_base_score(
-        self,
-        sample_signal: SignalContext,
-        sample_wallet: Wallet,
-        sample_token: TokenCharacteristics,
-    ):
-        """Test that solo signals get base cluster score."""
-        scorer = SignalScorer()
-
-        # No cluster
-        sample_signal.cluster_id = None
-        result = await scorer.score(sample_signal, sample_wallet, sample_token)
-
-        assert result.cluster_score.score == 0.5  # SOLO_SIGNAL_BASE
-        assert result.cluster_components.is_solo_signal is True
-
-    @pytest.mark.asyncio
-    async def test_cluster_signal_without_amplifier(
-        self,
-        sample_signal: SignalContext,
-        sample_wallet: Wallet,
-        sample_token: TokenCharacteristics,
-    ):
-        """Test cluster signal without amplifier gets base score."""
-        scorer = SignalScorer(cluster_amplifier=None)
-
-        # Has cluster but no amplifier
-        sample_signal.cluster_id = "cluster-123"
-        result = await scorer.score(sample_signal, sample_wallet, sample_token)
-
-        assert result.cluster_score.score == 0.5
-        assert result.cluster_components.is_solo_signal is True
-
-
-class TestTokenScoring:
-    """Tests for token score calculation (AC4)."""
-
-    @pytest.mark.asyncio
-    async def test_new_token_penalty(
-        self,
-        sample_signal: SignalContext,
-        sample_wallet: Wallet,
-        sample_token: TokenCharacteristics,
-    ):
-        """Test that very new tokens get penalized."""
-        scorer = SignalScorer()
-
-        # Established token
-        sample_token.is_new_token = False
-        sample_token.age_minutes = 60
-        result_established = await scorer.score(
-            sample_signal, sample_wallet, sample_token
+        # Leader (via ClusterInfo)
+        cluster_info_leader = ClusterInfo(
+            cluster_id="c1", is_leader=True, amplification_factor=1.0, cluster_size=3
+        )
+        result_leader = scorer.score(
+            wallet=sample_wallet,
+            token=sample_token,
+            tx_signature="sig123",
+            direction="buy",
+            cluster_info=cluster_info_leader,
         )
 
-        # Very new token
-        sample_token.is_new_token = True
-        sample_token.age_minutes = 2
-        result_new = await scorer.score(sample_signal, sample_wallet, sample_token)
+        assert result_leader.wallet_score > result_no_leader.wallet_score
+        assert result_leader.is_leader is True
 
-        assert result_new.token_score.score < result_established.token_score.score
-        assert result_new.token_components.age_penalty > 0
-        assert result_established.token_components.age_penalty == 0
-
-    @pytest.mark.asyncio
-    async def test_low_liquidity_reduces_score(
+    def test_wallet_score_clamped_to_one(
         self,
-        sample_signal: SignalContext,
-        sample_wallet: Wallet,
+        sample_wallet: WalletCacheEntry,
         sample_token: TokenCharacteristics,
     ):
-        """Test that low liquidity reduces token score."""
+        """Test that wallet score is clamped to 1.0."""
+        # Very high reputation + leader bonus could exceed 1.0
+        sample_wallet.reputation_score = 1.0
+        cluster_info = ClusterInfo(
+            cluster_id="c1", is_leader=True, amplification_factor=1.0, cluster_size=3
+        )
+        scorer = SignalScorer()
+        result = scorer.score(
+            wallet=sample_wallet,
+            token=sample_token,
+            tx_signature="sig123",
+            direction="buy",
+            cluster_info=cluster_info,
+        )
+
+        assert result.wallet_score <= 1.0
+
+
+class TestClusterBoost:
+    """Tests for cluster boost multiplier.
+
+    Epic 14 Story 14-5: Cluster boost now comes from ClusterInfo.amplification_factor.
+    """
+
+    def test_cluster_boost_increases_final_score(
+        self,
+        sample_wallet: WalletCacheEntry,
+        sample_token: TokenCharacteristics,
+    ):
+        """Test that cluster boost increases final score."""
         scorer = SignalScorer()
 
-        # Good liquidity
-        sample_token.liquidity = TokenLiquidity(usd=50000)
-        result_good = await scorer.score(sample_signal, sample_wallet, sample_token)
+        # No boost
+        cluster_info_no_boost = ClusterInfo(
+            cluster_id="c1", is_leader=False, amplification_factor=1.0, cluster_size=3
+        )
+        result_no_boost = scorer.score(
+            wallet=sample_wallet,
+            token=sample_token,
+            tx_signature="sig123",
+            direction="buy",
+            cluster_info=cluster_info_no_boost,
+        )
 
-        # Low liquidity
-        sample_token.liquidity = TokenLiquidity(usd=500)
-        result_low = await scorer.score(sample_signal, sample_wallet, sample_token)
+        # With boost
+        cluster_info_with_boost = ClusterInfo(
+            cluster_id="c1", is_leader=False, amplification_factor=1.5, cluster_size=3
+        )
+        result_with_boost = scorer.score(
+            wallet=sample_wallet,
+            token=sample_token,
+            tx_signature="sig123",
+            direction="buy",
+            cluster_info=cluster_info_with_boost,
+        )
 
-        assert result_low.token_score.score < result_good.token_score.score
-        assert result_low.token_components.liquidity_score == 0.0
+        assert result_with_boost.final_score > result_no_boost.final_score
+        assert result_with_boost.cluster_boost == 1.5
 
-    @pytest.mark.asyncio
-    async def test_optimal_liquidity_maxes_score(
+    def test_cluster_boost_clamped_to_max(
         self,
-        sample_signal: SignalContext,
-        sample_wallet: Wallet,
+        sample_wallet: WalletCacheEntry,
         sample_token: TokenCharacteristics,
     ):
-        """Test that optimal+ liquidity gives max liquidity score."""
+        """Test that cluster boost is clamped to max."""
+        cluster_info = ClusterInfo(
+            cluster_id="c1", is_leader=False, amplification_factor=3.0, cluster_size=3
+        )  # Above max of 1.8
         scorer = SignalScorer()
+        result = scorer.score(
+            wallet=sample_wallet,
+            token=sample_token,
+            tx_signature="sig123",
+            direction="buy",
+            cluster_info=cluster_info,
+        )
 
-        sample_token.liquidity = TokenLiquidity(usd=100000)  # Above optimal
-        result = await scorer.score(sample_signal, sample_wallet, sample_token)
+        assert result.cluster_boost == 1.8  # Clamped
 
-        assert result.token_components.liquidity_score == 1.0
-
-    @pytest.mark.asyncio
-    async def test_honeypot_reduces_score(
+    def test_cluster_boost_clamped_to_min(
         self,
-        sample_signal: SignalContext,
-        sample_wallet: Wallet,
+        sample_wallet: WalletCacheEntry,
         sample_token: TokenCharacteristics,
     ):
-        """Test that honeypot flag reduces token score."""
+        """Test that cluster boost is clamped to min."""
+        cluster_info = ClusterInfo(
+            cluster_id="c1", is_leader=False, amplification_factor=0.5, cluster_size=3
+        )  # Below min of 1.0
         scorer = SignalScorer()
+        result = scorer.score(
+            wallet=sample_wallet,
+            token=sample_token,
+            tx_signature="sig123",
+            direction="buy",
+            cluster_info=cluster_info,
+        )
 
-        # Normal token
-        sample_token.is_honeypot = None
-        result_normal = await scorer.score(sample_signal, sample_wallet, sample_token)
+        assert result.cluster_boost == 1.0  # Clamped
 
-        # Honeypot
-        sample_token.is_honeypot = True
-        result_honeypot = await scorer.score(sample_signal, sample_wallet, sample_token)
-
-        assert result_honeypot.token_score.score < result_normal.token_score.score
-        assert result_honeypot.token_components.honeypot_risk == 0.5
-
-    @pytest.mark.asyncio
-    async def test_freeze_authority_reduces_score(
+    def test_final_score_clamped_to_one(
         self,
-        sample_signal: SignalContext,
-        sample_wallet: Wallet,
+        sample_wallet: WalletCacheEntry,
         sample_token: TokenCharacteristics,
     ):
-        """Test that freeze authority reduces token score."""
+        """Test that final score is clamped to 1.0."""
+        sample_wallet.reputation_score = 0.9
+        cluster_info = ClusterInfo(
+            cluster_id="c1", is_leader=True, amplification_factor=1.8, cluster_size=3
+        )
         scorer = SignalScorer()
+        result = scorer.score(
+            wallet=sample_wallet,
+            token=sample_token,
+            tx_signature="sig123",
+            direction="buy",
+            cluster_info=cluster_info,
+        )
 
-        # Normal token
-        sample_token.has_freeze_authority = None
-        result_normal = await scorer.score(sample_signal, sample_wallet, sample_token)
+        assert result.final_score <= 1.0
 
-        # Has freeze authority
-        sample_token.has_freeze_authority = True
-        result_freeze = await scorer.score(sample_signal, sample_wallet, sample_token)
 
-        assert result_freeze.token_score.score < result_normal.token_score.score
-        assert result_freeze.token_components.honeypot_risk == 0.2
+class TestThresholdDecision:
+    """Tests for threshold-based trade decision."""
 
-    @pytest.mark.asyncio
-    async def test_market_cap_affects_score(
+    def test_above_threshold_should_trade(
         self,
-        sample_signal: SignalContext,
-        sample_wallet: Wallet,
+        sample_wallet: WalletCacheEntry,
         sample_token: TokenCharacteristics,
     ):
-        """Test that market cap affects token score."""
+        """Test that score above threshold triggers trade."""
+        sample_wallet.reputation_score = 0.9
+        cluster_info = ClusterInfo(
+            cluster_id="c1", is_leader=True, amplification_factor=1.5, cluster_size=3
+        )
         scorer = SignalScorer()
+        result = scorer.score(
+            wallet=sample_wallet,
+            token=sample_token,
+            tx_signature="sig123",
+            direction="buy",
+            cluster_info=cluster_info,
+        )
 
-        # High market cap
-        sample_token.market_cap_usd = 1000000
-        result_high = await scorer.score(sample_signal, sample_wallet, sample_token)
+        assert result.should_trade is True
+        assert result.final_score >= 0.65
 
-        # Low market cap
-        sample_token.market_cap_usd = 5000
-        result_low = await scorer.score(sample_signal, sample_wallet, sample_token)
-
-        assert result_high.token_components.market_cap_score > result_low.token_components.market_cap_score
-
-    @pytest.mark.asyncio
-    async def test_volume_affects_score(
+    def test_below_threshold_no_trade(
         self,
-        sample_signal: SignalContext,
-        sample_wallet: Wallet,
+        sample_wallet: WalletCacheEntry,
         sample_token: TokenCharacteristics,
     ):
-        """Test that volume affects token score."""
+        """Test that score below threshold doesn't trigger trade."""
+        sample_wallet.reputation_score = 0.3
         scorer = SignalScorer()
+        result = scorer.score(
+            wallet=sample_wallet,
+            token=sample_token,
+            tx_signature="sig123",
+            direction="buy",
+        )
 
-        # High volume
-        sample_token.volume = TokenVolume(h24=200000)
-        result_high = await scorer.score(sample_signal, sample_wallet, sample_token)
+        assert result.should_trade is False
+        assert result.final_score < 0.65
 
-        # Low volume
-        sample_token.volume = TokenVolume(h24=1000)
-        result_low = await scorer.score(sample_signal, sample_wallet, sample_token)
-
-        assert result_high.token_components.volume_score > result_low.token_components.volume_score
-
-
-class TestContextScoring:
-    """Tests for context score calculation (AC5)."""
-
-    @pytest.mark.asyncio
-    async def test_peak_hours_increase_score(
+    def test_position_multiplier_equals_boost_when_trading(
         self,
-        sample_signal: SignalContext,
-        sample_wallet: Wallet,
+        sample_wallet: WalletCacheEntry,
         sample_token: TokenCharacteristics,
     ):
-        """Test that peak trading hours increase context score."""
+        """Test that position multiplier equals cluster boost when trading."""
+        sample_wallet.reputation_score = 0.9
+        cluster_info = ClusterInfo(
+            cluster_id="c1", is_leader=True, amplification_factor=1.5, cluster_size=3
+        )
         scorer = SignalScorer()
+        result = scorer.score(
+            wallet=sample_wallet,
+            token=sample_token,
+            tx_signature="sig123",
+            direction="buy",
+            cluster_info=cluster_info,
+        )
 
-        # Peak hour (15 UTC)
-        sample_signal.timestamp = datetime.now(UTC).replace(hour=15)
-        result_peak = await scorer.score(sample_signal, sample_wallet, sample_token)
+        assert result.should_trade is True
+        assert result.position_multiplier == 1.5
 
-        # Off-peak hour (3 UTC)
-        sample_signal.timestamp = datetime.now(UTC).replace(hour=3)
-        result_offpeak = await scorer.score(sample_signal, sample_wallet, sample_token)
-
-        assert result_peak.context_score.score > result_offpeak.context_score.score
-        assert result_peak.context_components.time_of_day_score == 1.0
-        assert result_offpeak.context_components.time_of_day_score == 0.6
-
-
-class TestScoringConfig:
-    """Tests for scoring configuration via ConfigService."""
-
-    @pytest.mark.asyncio
-    async def test_default_weights_from_fallback(
+    def test_position_multiplier_one_when_not_trading(
         self,
-        sample_signal: SignalContext,
-        sample_wallet: Wallet,
+        sample_wallet: WalletCacheEntry,
         sample_token: TokenCharacteristics,
     ):
-        """Test that default weights are applied from ScoringParams.defaults()."""
+        """Test that position multiplier is 1.0 when not trading."""
+        sample_wallet.reputation_score = 0.3
+        cluster_info = ClusterInfo(
+            cluster_id="c1", is_leader=False, amplification_factor=1.5, cluster_size=3
+        )
+        scorer = SignalScorer()
+        result = scorer.score(
+            wallet=sample_wallet,
+            token=sample_token,
+            tx_signature="sig123",
+            direction="buy",
+            cluster_info=cluster_info,
+        )
+
+        assert result.should_trade is False
+        assert result.position_multiplier == 1.0
+
+
+class TestScoredSignalOutput:
+    """Tests for ScoredSignal output fields."""
+
+    def test_all_required_fields_populated(
+        self,
+        sample_wallet: WalletCacheEntry,
+        sample_token: TokenCharacteristics,
+    ):
+        """Test that all required fields are populated."""
+        cluster_info = ClusterInfo(
+            cluster_id="c1", is_leader=False, amplification_factor=1.2, cluster_size=3
+        )
+        scorer = SignalScorer()
+        result = scorer.score(
+            wallet=sample_wallet,
+            token=sample_token,
+            tx_signature="sig123456",
+            direction="buy",
+            cluster_info=cluster_info,
+        )
+
+        assert isinstance(result, ScoredSignal)
+        assert result.tx_signature == "sig123456"
+        assert result.wallet_address == sample_wallet.wallet_address
+        assert result.token_address == sample_token.token_address
+        assert result.direction == "buy"
+        assert result.scoring_time_ms >= 0
+
+    def test_explanation_contains_key_info(
+        self,
+        sample_wallet: WalletCacheEntry,
+        sample_token: TokenCharacteristics,
+    ):
+        """Test that explanation contains key information."""
+        scorer = SignalScorer()
+        result = scorer.score(
+            wallet=sample_wallet,
+            token=sample_token,
+            tx_signature="sig123",
+            direction="buy",
+        )
+
+        assert "Wallet:" in result.explanation
+        assert "Final:" in result.explanation
+
+    def test_cluster_info_preserved(
+        self,
+        sample_wallet: WalletCacheEntry,
+        sample_token: TokenCharacteristics,
+    ):
+        """Test that cluster info from ClusterInfo is preserved in result."""
+        cluster_info = ClusterInfo(
+            cluster_id="test-cluster-123",
+            is_leader=True,
+            amplification_factor=1.5,
+            cluster_size=5,
+        )
+        scorer = SignalScorer()
+        result = scorer.score(
+            wallet=sample_wallet,
+            token=sample_token,
+            tx_signature="sig123",
+            direction="buy",
+            cluster_info=cluster_info,
+        )
+
+        assert result.cluster_id == "test-cluster-123"
+        assert result.is_leader is True
+
+
+class TestScorerSingleton:
+    """Tests for scorer singleton pattern."""
+
+    def test_get_scorer_returns_same_instance(self):
+        """Test that get_scorer returns same instance."""
+        scorer1 = get_scorer()
+        scorer2 = get_scorer()
+
+        assert scorer1 is scorer2
+
+    def test_reset_scorer_clears_instance(self):
+        """Test that reset_scorer clears the instance."""
+        scorer1 = get_scorer()
         reset_scorer()
-        # Without ConfigService, scorer uses fallback defaults
-        scorer = SignalScorer()
-        result = await scorer.score(sample_signal, sample_wallet, sample_token)
+        scorer2 = get_scorer()
 
-        # Check fallback default weights are applied
-        assert result.weights_used.wallet == 0.30
-        assert result.weights_used.cluster == 0.25
-        assert result.weights_used.token == 0.25
-        assert result.weights_used.context == 0.20
+        assert scorer1 is not scorer2
 
-    @pytest.mark.asyncio
-    async def test_update_config_is_deprecated(self):
-        """Test that update_config() is deprecated and logs warning."""
+    def test_get_scorer_with_config(self):
+        """Test get_scorer with custom config."""
+        config = ScoringConfig(trade_threshold=0.70)
+        scorer = get_scorer(config)
+
+        assert scorer._params.trade_threshold == 0.70
+
+
+class TestConfigUpdate:
+    """Tests for config update functionality."""
+
+    def test_update_config_changes_params(self):
+        """Test that update_config changes scoring params."""
         scorer = SignalScorer()
 
         new_config = ScoringConfig(
-            weights=ScoringWeights(
-                wallet=0.40,
-                cluster=0.20,
-                token=0.20,
-                context=0.20,
-            )
+            trade_threshold=0.80,
+            leader_bonus=1.25,
         )
-
-        # update_config() should still work but is deprecated
         scorer.update_config(new_config)
 
-        # Legacy config is stored but not used for scoring
-        assert scorer._legacy_config is not None
-        assert scorer._legacy_config.weights.wallet == 0.40
+        assert scorer._params.trade_threshold == 0.80
+        assert scorer._params.leader_bonus == 1.25
 
+    def test_update_config_affects_scoring(
+        self,
+        sample_wallet: WalletCacheEntry,
+        sample_token: TokenCharacteristics,
+    ):
+        """Test that config update affects scoring."""
+        scorer = SignalScorer()
 
-class TestScoringWeightsValidation:
-    """Tests for scoring weights validation."""
-
-    def test_valid_weights(self):
-        """Test that valid weights are accepted."""
-        weights = ScoringWeights(
-            wallet=0.30,
-            cluster=0.25,
-            token=0.25,
-            context=0.20,
+        # Score with default threshold
+        result1 = scorer.score(
+            wallet=sample_wallet,
+            token=sample_token,
+            tx_signature="sig123",
+            direction="buy",
         )
 
-        assert weights.wallet == 0.30
-        assert weights.cluster == 0.25
+        # Update to very high threshold
+        scorer.update_config(ScoringConfig(trade_threshold=0.99))
 
-    def test_invalid_weights_sum(self):
-        """Test that weights not summing to 1.0 raise error."""
-        with pytest.raises(ValueError) as exc_info:
-            ScoringWeights(
-                wallet=0.40,
-                cluster=0.30,
-                token=0.30,
-                context=0.20,
-            )
-
-        assert "must sum to 1.0" in str(exc_info.value)
-
-
-class TestFinalScoreCalculation:
-    """Tests for final score calculation (AC6)."""
-
-    @pytest.mark.asyncio
-    async def test_final_score_is_weighted_sum(
-        self,
-        sample_signal: SignalContext,
-        sample_wallet: Wallet,
-        sample_token: TokenCharacteristics,
-    ):
-        """Test that final score equals weighted sum of factors."""
-        scorer = SignalScorer()
-        result = await scorer.score(sample_signal, sample_wallet, sample_token)
-
-        expected_final = (
-            result.wallet_score.weighted_contribution
-            + result.cluster_score.weighted_contribution
-            + result.token_score.weighted_contribution
-            + result.context_score.weighted_contribution
+        # Same score but different decision
+        result2 = scorer.score(
+            wallet=sample_wallet,
+            token=sample_token,
+            tx_signature="sig123",
+            direction="buy",
         )
 
-        assert abs(result.final_score - expected_final) < 0.001
+        assert result1.final_score == result2.final_score
+        assert result2.should_trade is False  # High threshold
 
-    @pytest.mark.asyncio
-    async def test_final_score_clamped(
+
+class TestEdgeCases:
+    """Tests for edge cases."""
+
+    def test_zero_reputation(
         self,
-        sample_signal: SignalContext,
-        sample_wallet: Wallet,
+        sample_wallet: WalletCacheEntry,
         sample_token: TokenCharacteristics,
     ):
-        """Test that final score is clamped to [0, 1]."""
+        """Test scoring with zero reputation."""
+        sample_wallet.reputation_score = 0.0
         scorer = SignalScorer()
-        result = await scorer.score(sample_signal, sample_wallet, sample_token)
+        result = scorer.score(
+            wallet=sample_wallet,
+            token=sample_token,
+            tx_signature="sig123",
+            direction="buy",
+        )
 
-        assert 0.0 <= result.final_score <= 1.0
+        # 0.0 * 0.6 + 0.5 * 0.4 = 0.20
+        assert result.wallet_score == 0.2
+        assert result.should_trade is False
 
-    @pytest.mark.asyncio
-    async def test_factor_contributions_preserved(
+    def test_none_reputation_uses_default(
         self,
-        sample_signal: SignalContext,
-        sample_wallet: Wallet,
+        sample_wallet: WalletCacheEntry,
         sample_token: TokenCharacteristics,
     ):
-        """Test that factor contributions are preserved for analysis."""
+        """Test that None reputation uses default 0.5."""
+        sample_wallet.reputation_score = None
         scorer = SignalScorer()
-        result = await scorer.score(sample_signal, sample_wallet, sample_token)
+        result = scorer.score(
+            wallet=sample_wallet,
+            token=sample_token,
+            tx_signature="sig123",
+            direction="buy",
+        )
 
-        # All factor scores have components
-        assert len(result.wallet_score.components) > 0
-        assert len(result.token_score.components) > 0
-        assert len(result.context_score.components) > 0
+        # Default 0.5 * 0.6 + 0.5 * 0.4 = 0.30 + 0.20 = 0.50
+        assert result.wallet_score == 0.5
 
-        # All detailed components are present
-        assert result.wallet_components is not None
-        assert result.token_components is not None
-        assert result.context_components is not None
-        assert result.cluster_components is not None
+    def test_sell_direction(
+        self,
+        sample_wallet: WalletCacheEntry,
+        sample_token: TokenCharacteristics,
+    ):
+        """Test scoring with sell direction."""
+        scorer = SignalScorer()
+        result = scorer.score(
+            wallet=sample_wallet,
+            token=sample_token,
+            tx_signature="sig123",
+            direction="sell",
+        )
+
+        assert result.direction == "sell"
+        assert result.final_score > 0  # Still scores normally
+
+    def test_no_cluster_info_uses_defaults(
+        self,
+        sample_wallet: WalletCacheEntry,
+        sample_token: TokenCharacteristics,
+    ):
+        """Test that None cluster_info uses safe defaults.
+
+        Epic 14 Story 14-5: When no cluster info is provided,
+        defaults to is_leader=False, cluster_id=None, boost=1.0.
+        """
+        scorer = SignalScorer()
+        result = scorer.score(
+            wallet=sample_wallet,
+            token=sample_token,
+            tx_signature="sig123",
+            direction="buy",
+            cluster_info=None,
+        )
+
+        assert result.cluster_id is None
+        assert result.is_leader is False
+        assert result.cluster_boost == 1.0

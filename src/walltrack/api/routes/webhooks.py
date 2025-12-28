@@ -7,7 +7,6 @@ import structlog
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from walltrack.config.settings import Settings, get_settings
 from walltrack.constants.webhook import MAX_PROCESSING_TIME_MS
 from walltrack.data.supabase.client import SupabaseClient, get_supabase_client
 from walltrack.data.supabase.repositories.webhook_repo import WebhookRepository

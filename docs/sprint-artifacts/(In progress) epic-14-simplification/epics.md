@@ -68,6 +68,13 @@ Based on TEA review findings from Epic 13 (Stories 13-11, 13-12, 13-13).
 - FR34: Move existing 4 manual buttons to collapsible "Advanced Actions"
 - FR35: Add Onboarding Config section (max_depth, min_score, min_size, max_network)
 
+**ADR-004: Cluster Architecture Refinement (Post 14-4 Review)**
+- FR36: Create cluster catchup scheduler for orphan wallets
+- FR37: Add discovery_source tracking (pump_discovery, cluster_expansion, funding_link, manual)
+- FR38: Remove cluster caching from WalletCache (query Neo4j directly)
+- FR39: Create ClusterService for direct Neo4j queries
+- FR40: Update SignalScorer to use ClusterService instead of cached data
+
 ### Non-Functional Requirements
 
 - NFR1: All tests must pass after each story completion
@@ -103,29 +110,31 @@ Based on TEA review findings from Epic 13 (Stories 13-11, 13-12, 13-13).
 
 | Requirement | Story | Status |
 |-------------|-------|--------|
-| FR1-FR10 (Exit Removal) | 14-1 | Pending |
-| FR11-FR22 (Scoring) | 14-3 | Pending |
-| FR23-FR25 (WalletCache Fix) | 14-2 | Pending |
-| FR26-FR35 (Network Onboarding) | 14-4 | Pending |
-| NFR1-NFR5 (Quality Gates) | All Stories | Pending |
-| NFR6 (Historical Validation) | 14-3 | Pending |
-| NFR7-NFR8 (Safeguards) | 14-4 | Pending |
-| NFR9 (UI Quality) | 14-1, 14-3, 14-4 | Pending |
+| FR1-FR10 (Exit Removal) | 14-1 | Done |
+| FR11-FR22 (Scoring) | 14-3 | Done |
+| FR23-FR25 (WalletCache Fix) | 14-2 | Done (superseded by 14-5) |
+| FR26-FR35 (Network Onboarding) | 14-4 | Done |
+| FR36-FR40 (Cluster Refinement) | 14-5 | Pending |
+| NFR1-NFR5 (Quality Gates) | All Stories | Ongoing |
+| NFR6 (Historical Validation) | 14-3 | Done |
+| NFR7-NFR8 (Safeguards) | 14-4 | Done |
+| NFR9 (UI Quality) | 14-1, 14-3, 14-4 | Done |
 
 ## Epic List
 
 | Epic | Title | Stories | Complexity |
 |------|-------|---------|------------|
-| 14 | System Simplification & Automation | 4 | High |
+| 14 | System Simplification & Automation | 5 | High |
 
 **Story Summary:**
 
-| Story | Title | Type | Dependencies |
-|-------|-------|------|--------------|
-| 14-1 | Exit Simulation Removal | Tech Debt / Cleanup | None |
-| 14-2 | WalletCache Cluster Integration | Bug Fix / Critical | None |
-| 14-3 | Scoring Simplification | Refactoring | 14-2 |
-| 14-4 | Automatic Network Onboarding | New Feature | 14-2, 14-3 |
+| Story | Title | Type | Status | Dependencies |
+|-------|-------|------|--------|--------------|
+| 14-1 | Exit Simulation Removal | Tech Debt / Cleanup | Done | None |
+| 14-2 | WalletCache Cluster Integration | Bug Fix / Critical | Done (superseded) | None |
+| 14-3 | Scoring Simplification | Refactoring | Done | 14-2 |
+| 14-4 | Automatic Network Onboarding | New Feature | Done | 14-2, 14-3 |
+| 14-5 | Cluster Architecture Refinement | Refactoring | Pending | 14-4 |
 
 ## Epic 14: System Simplification & Automation
 
@@ -171,3 +180,20 @@ Week 3: Automation
 **Type:** New Feature | **Complexity:** High | **Effort:** 6-7 hours
 **FRs covered:** FR26, FR27, FR28, FR29, FR30, FR31, FR32, FR33, FR34, FR35
 **Dependencies:** Story 14-2, Story 14-3
+
+### Story 14-5: Cluster Architecture Refinement
+**Type:** Refactoring | **Complexity:** Medium | **Effort:** 4-5 hours
+**FRs covered:** FR36, FR37, FR38, FR39, FR40
+**Dependencies:** Story 14-4
+
+**Key Decisions (from post-14-4 architectural review):**
+
+1. **Scheduler de rattrapage** : Les wallets profilés avant 14-4 n'ont pas de cluster. Un scheduler périodique (toutes les 30 min) traite les wallets orphelins.
+
+2. **Tracking origine découverte** : Nouveau champ `discovery_source` pour savoir d'où vient chaque wallet :
+   - `pump_discovery` : Trouvé via token pumped
+   - `cluster_expansion` : Trouvé via expansion de cluster
+   - `funding_link` : Trouvé comme funder d'un autre wallet
+   - `manual` : Ajouté manuellement
+
+3. **Suppression cache cluster** : WalletCache ne cache plus `cluster_id`/`is_leader`. Requête directe Neo4j via nouveau `ClusterService` (~10-20ms acceptable).

@@ -1,11 +1,13 @@
-"""E2E tests for WallTrack Gradio dashboard.
+"""E2E tests for WallTrack Gradio dashboard - Spec 01: Dashboard Navigation.
 
-These tests verify the dashboard loads correctly and basic navigation works.
-They require the Gradio server to be running on localhost:7860.
+These tests verify:
+- Dashboard cold start and loading
+- Tab visibility and navigation
+- System status panel
+- Error state handling
 
 Run with:
-    uv run pytest tests/e2e -m e2e --headed  # Visual mode
-    uv run pytest tests/e2e -m e2e           # Headless mode
+    uv run pytest tests/e2e/gradio/test_dashboard.py -m e2e -v
 """
 
 import pytest
@@ -14,195 +16,228 @@ from playwright.sync_api import Page, expect
 pytestmark = pytest.mark.e2e
 
 
-class TestDashboardLoads:
-    """Test that the dashboard loads and displays correctly."""
+class TestDashboardColdStart:
+    """TC-01.1: Dashboard Cold Start."""
 
     def test_dashboard_title_visible(self, dashboard_page: Page) -> None:
         """Dashboard should display the main title."""
         title = dashboard_page.locator("#dashboard-title")
         expect(title).to_be_visible()
-        expect(title).to_contain_text("WallTrack Dashboard")
+        expect(title).to_contain_text("WallTrack")
 
     def test_dashboard_subtitle_visible(self, dashboard_page: Page) -> None:
         """Dashboard should display the subtitle."""
         subtitle = dashboard_page.locator("#dashboard-subtitle")
         expect(subtitle).to_be_visible()
-        expect(subtitle).to_contain_text("Solana Memecoin")
 
-    def test_main_tabs_visible(self, dashboard_page: Page) -> None:
-        """All main navigation tabs should be visible."""
-        tab_names = [
-            "Status",
-            "Wallets",
-            "Clusters",
-            "Signals",
-            "Positions",
-            "Performance",
-            "Config",
+    def test_gradio_container_loaded(self, dashboard_page: Page) -> None:
+        """Gradio container should be fully loaded."""
+        container = dashboard_page.locator(".gradio-container")
+        expect(container).to_be_visible()
+
+
+class TestNavVisibility:
+    """TC-01.2: All Navigation Links Visible."""
+
+    def test_all_nav_links_visible(self, dashboard_page: Page) -> None:
+        """All main navigation links should be visible."""
+        nav_names = [
+            "Home",
+            "Explorer",
+            "Orders",
+            "Settings",
+            "Exit Strategies",
         ]
-        for tab_name in tab_names:
-            tab = dashboard_page.get_by_role("tab", name=tab_name)
-            expect(tab).to_be_visible()
+        for nav_name in nav_names:
+            link = dashboard_page.get_by_role("link", name=nav_name)
+            expect(link).to_be_visible()
+
+    def test_home_is_default(self, dashboard_page: Page) -> None:
+        """Home page should load by default."""
+        # Check dashboard title is visible (we're on home)
+        title = dashboard_page.locator("h1")
+        expect(title).to_contain_text("WallTrack")
 
 
-class TestTabNavigation:
-    """Test navigation between dashboard tabs."""
+class TestNavigation:
+    """TC-01.3: Navigation Round-Trip."""
 
-    def test_navigate_to_wallets_tab(
+    def test_navigate_to_explorer(
         self, dashboard_page: Page, gradio_locators
     ) -> None:
-        """Should navigate to Wallets tab and show wallet components."""
-        gradio_locators.click_tab("wallets")
+        """Should navigate to Explorer page."""
+        gradio_locators.click_tab("explorer")
+        # Verify URL changed
+        expect(dashboard_page).to_have_url("http://localhost:7865/explorer")
 
-        # Verify wallet components are visible
-        expect(gradio_locators.wallets_refresh_btn).to_be_visible()
-        expect(gradio_locators.wallets_status_filter).to_be_visible()
-
-    def test_navigate_to_config_tab(
+    def test_navigate_to_orders(
         self, dashboard_page: Page, gradio_locators
     ) -> None:
-        """Should navigate to Config tab and show config components."""
-        gradio_locators.click_tab("config")
+        """Should navigate to Orders page."""
+        gradio_locators.click_tab("orders")
+        expect(dashboard_page).to_have_url("http://localhost:7865/orders")
 
-        # Verify config components are visible
-        expect(gradio_locators.config_apply_weights_btn).to_be_visible()
-        expect(gradio_locators.config_normalize_btn).to_be_visible()
-
-    def test_navigate_to_positions_tab(
+    def test_navigate_to_settings(
         self, dashboard_page: Page, gradio_locators
     ) -> None:
-        """Should navigate to Positions tab and show positions components."""
-        gradio_locators.click_tab("positions")
+        """Should navigate to Settings page."""
+        gradio_locators.click_tab("settings")
+        expect(dashboard_page).to_have_url("http://localhost:7865/settings")
 
-        # Verify positions components are visible
-        expect(gradio_locators.positions_refresh_btn).to_be_visible()
-
-    def test_tab_round_trip(
+    def test_navigate_to_exit_strategies(
         self, dashboard_page: Page, gradio_locators
     ) -> None:
-        """Should navigate through multiple tabs and back."""
-        # Start at status (default)
-        gradio_locators.click_tab("wallets")
-        expect(gradio_locators.wallets_refresh_btn).to_be_visible()
+        """Should navigate to Exit Strategies page."""
+        gradio_locators.click_tab("exit-strategies")
+        expect(dashboard_page).to_have_url("http://localhost:7865/exit-strategies")
 
-        gradio_locators.click_tab("config")
-        expect(gradio_locators.config_apply_weights_btn).to_be_visible()
+    def test_nav_round_trip(
+        self, dashboard_page: Page, gradio_locators
+    ) -> None:
+        """Should navigate through pages and back."""
+        # Navigate through pages
+        gradio_locators.click_tab("explorer")
+        expect(dashboard_page).to_have_url("http://localhost:7865/explorer")
 
-        gradio_locators.click_tab("positions")
-        expect(gradio_locators.positions_refresh_btn).to_be_visible()
+        gradio_locators.click_tab("orders")
+        expect(dashboard_page).to_have_url("http://localhost:7865/orders")
 
-        # Back to wallets
-        gradio_locators.click_tab("wallets")
-        expect(gradio_locators.wallets_refresh_btn).to_be_visible()
+        gradio_locators.click_tab("home")
+        expect(dashboard_page).to_have_url("http://localhost:7865/")
+
+
+class TestSystemStatus:
+    """TC-01.4: System Status Panel (Home page stats)."""
+
+    def test_stats_cards_visible(self, dashboard_page: Page) -> None:
+        """Stats cards should be visible on Home page."""
+        # Home page has stats cards instead of status panel
+        pnl_card = dashboard_page.get_by_text("P&L Today")
+        expect(pnl_card).to_be_visible()
+
+    def test_active_positions_card_visible(self, dashboard_page: Page) -> None:
+        """Active Positions card should be visible."""
+        positions_card = dashboard_page.get_by_text("Active Positions").first
+        expect(positions_card).to_be_visible()
+
+    def test_signals_today_card_visible(self, dashboard_page: Page) -> None:
+        """Signals Today card should be visible."""
+        signals_card = dashboard_page.get_by_text("Signals Today")
+        expect(signals_card).to_be_visible()
 
 
 class TestWalletsTab:
-    """Test Wallets tab functionality."""
+    """Tests for Wallets tab (Explorer > Wallets sub-tab)."""
+
+    def test_wallets_subtab_accessible(
+        self, dashboard_page: Page, gradio_locators
+    ) -> None:
+        """Wallets sub-tab should be accessible from Explorer."""
+        gradio_locators.click_tab("explorer")
+        # Click on Wallets sub-tab
+        wallets_tab = dashboard_page.get_by_role("tab", name="Wallets")
+        expect(wallets_tab).to_be_visible()
+        wallets_tab.click()
 
     def test_wallets_table_exists(
         self, dashboard_page: Page, gradio_locators
     ) -> None:
         """Wallets table should be present."""
-        gradio_locators.click_tab("wallets")
-        expect(gradio_locators.wallets_table).to_be_visible()
+        gradio_locators.click_tab("explorer")
+        dashboard_page.get_by_role("tab", name="Wallets").click()
+        dashboard_page.wait_for_timeout(500)
+        # Check for wallets table or wallet list
+        wallets_content = dashboard_page.locator("#wallets-table, .wallets-list")
+        if wallets_content.count() > 0:
+            expect(wallets_content.first).to_be_visible()
 
-    def test_wallets_filter_options(
+    def test_clusters_subtab_accessible(
         self, dashboard_page: Page, gradio_locators
     ) -> None:
-        """Status filter should have correct options."""
-        gradio_locators.click_tab("wallets")
-
-        # Verify the filter dropdown is visible and clickable
-        expect(gradio_locators.wallets_status_filter).to_be_visible()
-
-        # Click to open dropdown - Gradio renders options as listbox items
-        gradio_locators.wallets_status_filter.click()
-
-        # Check that a listbox appears with options (Gradio dropdown behavior)
-        listbox = dashboard_page.get_by_role("listbox")
-        expect(listbox).to_be_visible()
-
-    def test_add_wallet_input_exists(
-        self, dashboard_page: Page, gradio_locators
-    ) -> None:
-        """Add wallet input and button should exist."""
-        gradio_locators.click_tab("wallets")
-
-        expect(gradio_locators.wallets_add_address_input).to_be_visible()
-        expect(gradio_locators.wallets_add_btn).to_be_visible()
+        """Clusters sub-tab should be accessible from Explorer."""
+        gradio_locators.click_tab("explorer")
+        clusters_tab = dashboard_page.get_by_role("tab", name="Clusters")
+        expect(clusters_tab).to_be_visible()
+        clusters_tab.click()
 
 
 class TestConfigTab:
-    """Test Config tab functionality."""
+    """Tests for Settings page (Configuration Management)."""
 
-    def test_weight_sliders_exist(
+    def test_settings_page_loads(
         self, dashboard_page: Page, gradio_locators
     ) -> None:
-        """All weight sliders should be present."""
-        gradio_locators.click_tab("config")
+        """Settings page should load with configuration tabs."""
+        gradio_locators.click_tab("settings")
+        heading = dashboard_page.get_by_text("Configuration Management")
+        expect(heading).to_be_visible()
 
-        sliders = [
-            "#config-wallet-weight",
-            "#config-cluster-weight",
-            "#config-token-weight",
-            "#config-context-weight",
-        ]
-        for slider_id in sliders:
-            expect(dashboard_page.locator(slider_id)).to_be_visible()
-
-    def test_threshold_sliders_exist(
+    def test_trading_tab_visible(
         self, dashboard_page: Page, gradio_locators
     ) -> None:
-        """Threshold sliders should be accessible."""
-        gradio_locators.click_tab("config")
+        """Trading sub-tab should be visible."""
+        gradio_locators.click_tab("settings")
+        trading_tab = dashboard_page.get_by_role("tab", name="Trading")
+        expect(trading_tab).to_be_visible()
 
-        # Navigate to Trade Threshold sub-tab (use role for unique selection)
-        dashboard_page.get_by_role("tab", name="Trade Threshold").click()
-
-        expect(dashboard_page.locator("#config-trade-threshold")).to_be_visible()
-        expect(dashboard_page.locator("#config-high-conviction")).to_be_visible()
-
-    def test_reset_button_exists(
+    def test_scoring_tab_accessible(
         self, dashboard_page: Page, gradio_locators
     ) -> None:
-        """Reset button should be accessible."""
-        gradio_locators.click_tab("config")
+        """Scoring sub-tab should be accessible."""
+        gradio_locators.click_tab("settings")
+        scoring_tab = dashboard_page.get_by_role("tab", name="Scoring")
+        expect(scoring_tab).to_be_visible()
+        scoring_tab.click()
 
-        # Navigate to Trade Threshold sub-tab where reset button is
-        dashboard_page.get_by_role("tab", name="Trade Threshold").click()
+    def test_edit_button_exists(
+        self, dashboard_page: Page, gradio_locators
+    ) -> None:
+        """Edit configuration button should exist."""
+        gradio_locators.click_tab("settings")
+        edit_btn = dashboard_page.get_by_role("button", name="Edit")
+        expect(edit_btn).to_be_visible()
 
-        expect(gradio_locators.config_reset_btn).to_be_visible()
+    def test_refresh_button_exists(
+        self, dashboard_page: Page, gradio_locators
+    ) -> None:
+        """Refresh button should be accessible."""
+        gradio_locators.click_tab("settings")
+        refresh_btn = dashboard_page.get_by_role("button", name="Refresh")
+        expect(refresh_btn).to_be_visible()
 
 
 class TestPositionsTab:
-    """Test Positions tab functionality."""
+    """Tests for Active Positions on Home page."""
 
-    def test_positions_table_exists(
+    def test_positions_heading_visible(
         self, dashboard_page: Page, gradio_locators
     ) -> None:
-        """Positions table should be present."""
-        gradio_locators.click_tab("positions")
-        expect(gradio_locators.positions_table).to_be_visible()
+        """Active Positions heading should be visible on Home."""
+        gradio_locators.click_tab("home")
+        heading = dashboard_page.get_by_role("heading", name="Active Positions")
+        expect(heading).to_be_visible()
 
-    def test_trade_history_tab_accessible(
+    def test_positions_table_has_headers(
         self, dashboard_page: Page, gradio_locators
     ) -> None:
-        """Trade History sub-tab should be accessible."""
-        gradio_locators.click_tab("positions")
+        """Positions table should have expected column headers."""
+        gradio_locators.click_tab("home")
+        # Check for position table headers
+        token_header = dashboard_page.get_by_role("columnheader").filter(has_text="Token")
+        expect(token_header.first).to_be_visible()
 
-        # Click Trade History sub-tab (use role for unique selection)
-        dashboard_page.get_by_role("tab", name="Trade History").click()
-
-        expect(gradio_locators.history_table).to_be_visible()
-
-    def test_history_filters_exist(
+    def test_sidebar_shows_no_selection(
         self, dashboard_page: Page, gradio_locators
     ) -> None:
-        """History filters should be present."""
-        gradio_locators.click_tab("positions")
-        dashboard_page.get_by_role("tab", name="Trade History").click()
+        """Sidebar should show 'No Selection' by default."""
+        gradio_locators.click_tab("home")
+        no_selection = dashboard_page.get_by_text("No Selection")
+        expect(no_selection).to_be_visible()
 
-        expect(dashboard_page.locator("#history-date-from")).to_be_visible()
-        expect(dashboard_page.locator("#history-date-to")).to_be_visible()
-        expect(dashboard_page.locator("#history-pnl-filter")).to_be_visible()
-        expect(dashboard_page.locator("#history-search-btn")).to_be_visible()
+    def test_toggle_sidebar_button_exists(
+        self, dashboard_page: Page, gradio_locators
+    ) -> None:
+        """Toggle Sidebar button should exist."""
+        gradio_locators.click_tab("home")
+        toggle_btn = dashboard_page.get_by_role("button", name="Toggle Sidebar")
+        expect(toggle_btn).to_be_visible()

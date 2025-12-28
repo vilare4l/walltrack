@@ -2,10 +2,11 @@
 
 ## Story Info
 - **Epic**: Epic 14 - System Simplification & Automation
-- **Status**: ready-for-dev
+- **Status**: done
 - **Priority**: P0 - Critical
 - **Story Points**: 8
 - **Depends on**: Story 14-2 (WalletCache Cluster Integration)
+- **Completed**: 2025-12-27
 
 ## User Story
 

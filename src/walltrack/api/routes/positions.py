@@ -1,4 +1,4 @@
-"""API routes for positions and simulation endpoints."""
+"""API routes for positions endpoints."""
 
 from __future__ import annotations
 
@@ -15,16 +15,10 @@ from walltrack.services.positions.timeline_service import (
     PositionEventType,
     get_timeline_service,
 )
-from walltrack.services.simulation.global_analyzer import get_global_analyzer
-from walltrack.services.simulation.strategy_comparator import (
-    format_comparison_table,
-    get_strategy_comparator,
-)
 
 logger = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/positions", tags=["positions"])
-analysis_router = APIRouter(prefix="/analysis", tags=["analysis"])
 
 
 # =============================================================================
@@ -101,39 +95,6 @@ class ChangeStrategyResponse(BaseModel):
     message: str
 
 
-class SimulateRequest(BaseModel):
-    """Request for position simulation."""
-
-    strategy_ids: list[str] = Field(..., min_length=1, max_length=10)
-
-
-class SimulationRowResponse(BaseModel):
-    """Single simulation row."""
-
-    strategy_id: str
-    strategy_name: str
-    simulated_pnl_pct: float
-    actual_pnl_pct: float | None
-    delta_pct: float | None
-    exit_time: datetime | None
-    exit_types: list[str]
-    is_best: bool
-
-
-class SimulationResponse(BaseModel):
-    """Simulation comparison response."""
-
-    position_id: str
-    entry_price: float
-    actual_exit_price: float | None
-    actual_pnl_pct: float | None
-    rows: list[SimulationRowResponse]
-    best_strategy_id: str
-    best_strategy_name: str
-    best_improvement_pct: float | None
-    markdown_table: str
-
-
 class TimelineEventResponse(BaseModel):
     """Single timeline event."""
 
@@ -157,48 +118,6 @@ class TimelineResponse(BaseModel):
     duration_hours: float
     events: list[TimelineEventResponse]
     total_events: int
-
-
-class GlobalAnalysisRequest(BaseModel):
-    """Request for global analysis."""
-
-    position_ids: list[str] = Field(
-        default=[], description="Position IDs (empty=all closed)"
-    )
-    strategy_ids: list[str] = Field(
-        default=[], description="Strategy IDs (empty=all active)"
-    )
-    days_back: int = Field(default=30, ge=1, le=365)
-    limit: int = Field(default=100, ge=1, le=500)
-
-
-class StrategyStatsResponse(BaseModel):
-    """Strategy statistics."""
-
-    strategy_id: str
-    strategy_name: str
-    positions_analyzed: int
-    avg_pnl_pct: float
-    median_pnl_pct: float
-    total_pnl_sol: float
-    win_rate_pct: float
-    avg_improvement_pct: float
-    best_position_id: str
-    best_improvement_pct: float
-    worst_position_id: str
-    worst_improvement_pct: float
-
-
-class GlobalAnalysisResponse(BaseModel):
-    """Global analysis response."""
-
-    total_positions: int
-    strategies_compared: int
-    analysis_time_seconds: float
-    strategy_stats: list[StrategyStatsResponse]
-    recommended_strategy_id: str
-    recommended_strategy_name: str
-    summary_markdown: str
 
 
 # =============================================================================
@@ -503,61 +422,6 @@ async def change_position_strategy(
     )
 
 
-@router.post("/{position_id}/simulate", response_model=SimulationResponse)
-async def simulate_position(
-    position_id: str,
-    request: SimulateRequest,
-) -> SimulationResponse:
-    """
-    Run what-if simulation on a position.
-
-    Compares multiple exit strategies against the actual result.
-    """
-    comparator = await get_strategy_comparator()
-
-    result = await comparator.compare(position_id, request.strategy_ids)
-
-    if not result:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Could not simulate. Check if position has price history.",
-        )
-
-    rows = [
-        SimulationRowResponse(
-            strategy_id=r.strategy_id,
-            strategy_name=r.strategy_name,
-            simulated_pnl_pct=float(r.simulated_pnl_pct),
-            actual_pnl_pct=float(r.actual_pnl_pct) if r.actual_pnl_pct else None,
-            delta_pct=float(r.delta_pct) if r.delta_pct else None,
-            exit_time=r.exit_time,
-            exit_types=r.exit_types,
-            is_best=r.is_best,
-        )
-        for r in result.rows
-    ]
-
-    markdown_table = format_comparison_table(result)
-
-    return SimulationResponse(
-        position_id=result.position_id,
-        entry_price=float(result.entry_price),
-        actual_exit_price=(
-            float(result.actual_exit_price) if result.actual_exit_price else None
-        ),
-        actual_pnl_pct=(
-            float(result.actual_pnl_pct) if result.actual_pnl_pct else None
-        ),
-        rows=rows,
-        best_strategy_id=result.best_strategy_id,
-        best_strategy_name=result.best_strategy_name,
-        best_improvement_pct=(
-            float(result.best_improvement_pct) if result.best_improvement_pct else None
-        ),
-        markdown_table=markdown_table,
-    )
-
-
 @router.get("/{position_id}/timeline", response_model=TimelineResponse)
 async def get_position_timeline(
     position_id: str,
@@ -642,104 +506,3 @@ async def export_position_timeline(
         ) from e
 
     return {"data": data, "format": format_type}
-
-
-# =============================================================================
-# Analysis Endpoints
-# =============================================================================
-
-
-@analysis_router.post("/global", response_model=GlobalAnalysisResponse)
-async def run_global_analysis(request: GlobalAnalysisRequest) -> GlobalAnalysisResponse:
-    """
-    Run global analysis across multiple positions.
-
-    Compares strategies and identifies the best performer.
-    """
-    analyzer = await get_global_analyzer()
-
-    result = await analyzer.analyze(
-        position_ids=request.position_ids or None,
-        strategy_ids=request.strategy_ids or None,
-        days_back=request.days_back,
-        limit=request.limit,
-    )
-
-    if not result:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Could not run analysis. No valid positions found.",
-        )
-
-    # Build strategy stats
-    stats = [
-        StrategyStatsResponse(
-            strategy_id=s.strategy_id,
-            strategy_name=s.strategy_name,
-            positions_analyzed=s.positions_analyzed,
-            avg_pnl_pct=float(s.avg_pnl_pct),
-            median_pnl_pct=float(s.median_pnl_pct),
-            total_pnl_sol=float(s.total_pnl_sol),
-            win_rate_pct=float(s.win_rate_pct),
-            avg_improvement_pct=float(s.avg_improvement_pct),
-            best_position_id=s.best_position_id,
-            best_improvement_pct=float(s.best_improvement_pct),
-            worst_position_id=s.worst_position_id,
-            worst_improvement_pct=float(s.worst_improvement_pct),
-        )
-        for s in result.strategy_stats
-    ]
-
-    # Build summary markdown
-    summary_md = f"""## Global Analysis Summary
-
-**Positions Analyzed:** {result.total_positions}
-**Strategies Compared:** {result.strategies_compared}
-**Analysis Time:** {result.analysis_duration_seconds:.2f}s
-
-### Recommended Strategy
-**{result.recommended_strategy_name}**
-
-### Strategy Performance
-
-| Strategy | Avg P&L | Win Rate | Avg Improvement |
-|----------|---------|----------|-----------------|
-"""
-    for s in stats:
-        summary_md += (
-            f"| {s.strategy_name} | {s.avg_pnl_pct:+.2f}% | "
-            f"{s.win_rate_pct:.1f}% | {s.avg_improvement_pct:+.2f}% |\n"
-        )
-
-    return GlobalAnalysisResponse(
-        total_positions=result.total_positions,
-        strategies_compared=result.strategies_compared,
-        analysis_time_seconds=result.analysis_duration_seconds,
-        strategy_stats=stats,
-        recommended_strategy_id=result.recommended_strategy_id,
-        recommended_strategy_name=result.recommended_strategy_name,
-        summary_markdown=summary_md,
-    )
-
-
-@analysis_router.get("/positions/{position_id}/compare-all")
-async def compare_all_strategies(position_id: str) -> dict:
-    """Quick endpoint to compare all active strategies on a single position."""
-    comparator = await get_strategy_comparator()
-
-    result = await comparator.compare_all_active_strategies(position_id)
-
-    if not result:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Could not compare. Check if position has price history.",
-        )
-
-    return {
-        "position_id": position_id,
-        "best_strategy": result.best_strategy_name,
-        "best_improvement_pct": (
-            float(result.best_improvement_pct) if result.best_improvement_pct else None
-        ),
-        "comparison_table": format_comparison_table(result),
-    }

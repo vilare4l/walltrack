@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 import structlog
 
@@ -64,7 +64,7 @@ class ExitOrderService:
         exit_reason: ExitReason,
         sell_percent: Decimal = Decimal("100"),
         max_slippage_bps: int = 150,
-    ) -> Optional[Order]:
+    ) -> Order | None:
         """
         Create an exit order for a position.
 
@@ -313,7 +313,7 @@ class ExitOrderService:
             attempts=order.attempt_count,
         )
 
-    async def retry_failed_exit(self, order_id: str) -> Optional[Order]:
+    async def retry_failed_exit(self, order_id: str) -> Order | None:
         """
         Manually retry a failed exit order.
 
@@ -375,7 +375,7 @@ class ExitOrderService:
 
 
 # Singleton
-_exit_service: Optional[ExitOrderService] = None
+_exit_service: ExitOrderService | None = None
 
 
 async def get_exit_order_service() -> ExitOrderService:

@@ -5,7 +5,7 @@ hot-reload (via TTL expiry) and fallback to defaults when DB unavailable.
 """
 
 from decimal import Decimal
-from typing import Any, Optional
+from typing import Any
 
 import structlog
 from cachetools import TTLCache
@@ -129,7 +129,7 @@ class ConfigService:
             )
             return default
 
-    async def get_block(self, table: str) -> Optional[ConfigBase]:
+    async def get_block(self, table: str) -> ConfigBase | None:
         """
         Get full configuration block for a table.
 
@@ -230,7 +230,7 @@ class ConfigService:
             return self._create_default_api_config()
         return block  # type: ignore
 
-    async def refresh(self, table: Optional[str] = None) -> None:
+    async def refresh(self, table: str | None = None) -> None:
         """
         Force refresh of cached configuration.
 
@@ -254,7 +254,7 @@ class ConfigService:
             self._block_cache.clear()
             logger.info("all_configs_refreshed")
 
-    def _get_fallback_block(self, table: str) -> Optional[ConfigBase]:
+    def _get_fallback_block(self, table: str) -> ConfigBase | None:
         """Get fallback block with default values."""
         match table:
             case "trading":
@@ -401,7 +401,7 @@ class ConfigService:
 
 
 # Singleton
-_config_service: Optional[ConfigService] = None
+_config_service: ConfigService | None = None
 
 
 async def get_config_service() -> ConfigService:

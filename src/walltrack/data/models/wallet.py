@@ -15,6 +15,18 @@ class WalletStatus(str, Enum):
     INSUFFICIENT_DATA = "insufficient_data"
 
 
+class DiscoverySource(str, Enum):
+    """Origin of wallet discovery.
+
+    Epic 14 Story 14-5: Discovery Origin Tracking
+    """
+
+    PUMP_DISCOVERY = "pump_discovery"  # Found via PumpFinder from a pumped token
+    CLUSTER_EXPANSION = "cluster_expansion"  # Found via NetworkOnboarder recursion
+    FUNDING_LINK = "funding_link"  # Found as funder of another wallet
+    MANUAL = "manual"  # Added manually via API or import
+
+
 class WalletProfile(BaseModel):
     """Wallet performance profile."""
 
@@ -64,6 +76,17 @@ class Wallet(BaseModel):
     )
     discovery_tokens: list[str] = Field(
         default_factory=list, description="Token mints from discovery"
+    )
+
+    # Discovery origin tracking (Epic 14 Story 14-5)
+    discovery_source: DiscoverySource | None = Field(
+        default=None, description="Origin of wallet discovery"
+    )
+    discovered_from_wallet: str | None = Field(
+        default=None, description="Parent wallet if cluster_expansion"
+    )
+    discovered_from_token: str | None = Field(
+        default=None, description="Token if pump_discovery"
     )
 
     # Decay tracking

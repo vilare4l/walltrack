@@ -206,7 +206,7 @@ class RiskManager:
         except Exception as e:
             log.warning("risk_check_error", error=str(e))
             # Allow entry on error - fail open
-            return RiskCheck(allowed=True, reason=f"Check failed: {str(e)}")
+            return RiskCheck(allowed=True, reason=f"Check failed: {e!s}")
 
     async def calculate_position_size(
         self,

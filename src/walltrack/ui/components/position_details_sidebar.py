@@ -281,28 +281,21 @@ def render_closed_position(position: dict[str, Any]) -> str:
 | Signal Score | {signal_score:.2f} |
 | Signal Date | {signal_date} |
 
----
-
-## 📊 What-If Analysis
-
-*Click the button below to simulate alternative strategies*
 """
 
     return md
 
 
 def create_position_details_sidebar(
-    on_whatif: Callable[[str], None] | None = None,
     on_change_strategy: Callable[[str], None] | None = None,
-) -> tuple[gr.Column, gr.Markdown, gr.Button, gr.Button, gr.State]:
+) -> tuple[gr.Column, gr.Markdown, gr.Button, gr.State]:
     """Create the position details sidebar component.
 
     Args:
-        on_whatif: Callback when What-If button clicked
         on_change_strategy: Callback when Change Strategy button clicked
 
     Returns:
-        Tuple of (sidebar_container, details_content, whatif_btn, strategy_btn, position_id_state)
+        Tuple of (sidebar_container, details_content, strategy_btn, position_id_state)
     """
     with gr.Column(visible=False, elem_id="position-details-sidebar") as sidebar_container:
         with gr.Row():
@@ -313,37 +306,24 @@ def create_position_details_sidebar(
 
         position_id_state = gr.State(None)
 
-        with gr.Row(visible=False, elem_id="whatif-row") as whatif_row:
-            whatif_btn = gr.Button(
-                "📊 Open What-If Simulator", variant="primary", elem_id="sidebar-whatif-btn"
-            )
-
         with gr.Row(visible=False, elem_id="strategy-row") as strategy_row:
             strategy_btn = gr.Button(
                 "⚙️ Change Strategy", variant="secondary", elem_id="sidebar-strategy-btn"
             )
 
     # Close handler
-    def close_sidebar() -> tuple[gr.update, str, gr.update, gr.update, None]:
+    def close_sidebar() -> tuple[gr.update, str, gr.update, None]:
         return (
             gr.update(visible=False),
             "",
-            gr.update(visible=False),
             gr.update(visible=False),
             None,
         )
 
     close_btn.click(
         close_sidebar,
-        outputs=[sidebar_container, details_content, whatif_row, strategy_row, position_id_state],
+        outputs=[sidebar_container, details_content, strategy_row, position_id_state],
     )
-
-    # Whatif handler
-    def handle_whatif(position_id: str | None) -> None:
-        if position_id and on_whatif:
-            on_whatif(position_id)
-
-    whatif_btn.click(handle_whatif, [position_id_state])
 
     # Strategy handler
     def handle_strategy(position_id: str | None) -> None:
@@ -352,25 +332,24 @@ def create_position_details_sidebar(
 
     strategy_btn.click(handle_strategy, [position_id_state])
 
-    return sidebar_container, details_content, whatif_btn, strategy_btn, position_id_state
+    return sidebar_container, details_content, strategy_btn, position_id_state
 
 
 async def open_sidebar(
     position_id: str,
-) -> tuple[gr.update, str, gr.update, gr.update, str | None]:
+) -> tuple[gr.update, str, gr.update, str | None]:
     """Open sidebar with position details.
 
     Args:
         position_id: Position ID to display
 
     Returns:
-        Tuple of updates for (container, content, whatif_row, strategy_row, position_id_state)
+        Tuple of updates for (container, content, strategy_row, position_id_state)
     """
     if not position_id:
         return (
             gr.update(visible=False),
             "",
-            gr.update(visible=False),
             gr.update(visible=False),
             None,
         )
@@ -380,7 +359,6 @@ async def open_sidebar(
         return (
             gr.update(visible=True),
             "**Position not found**",
-            gr.update(visible=False),
             gr.update(visible=False),
             None,
         )
@@ -392,7 +370,6 @@ async def open_sidebar(
         return (
             gr.update(visible=True),
             content,
-            gr.update(visible=False),  # whatif hidden for active
             gr.update(visible=True),  # strategy visible for active
             position.get("id"),
         )
@@ -401,7 +378,6 @@ async def open_sidebar(
         return (
             gr.update(visible=True),
             content,
-            gr.update(visible=True),  # whatif visible for closed
             gr.update(visible=False),  # strategy hidden for closed
             position.get("id"),
         )

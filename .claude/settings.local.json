@@ -64,7 +64,8 @@
       "mcp__playwright__browser_evaluate",
       "mcp__playwright__browser_run_code",
       "mcp__playwright__browser_install",
-      "Bash(docker compose:*)"
+      "Bash(docker compose:*)",
+      "Bash(del /Q \"C:\\\\Users\\\\pc\\\\projects\\\\walltrack\\\\tests\\\\core\\\\feedback\\\\test_backtester.py\")"
     ]
   }
 }

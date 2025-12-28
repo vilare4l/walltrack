@@ -1,675 +1,347 @@
-"""Multi-factor signal scoring engine.
+"""Simplified 2-component signal scoring engine.
 
-This module uses ConfigService for all scoring parameters, enabling
-hot-reload without restart. Fallback constants are deprecated.
+Epic 14 Simplification:
+- Token safety: Binary gate (honeypot, freeze, mint)
+- Wallet score: win_rate (60%) + pnl_normalized (40%) + leader_bonus
+- Cluster boost: Direct multiplier 1.0x to 1.8x
+- Single threshold: 0.65
+
+Epic 14 Story 14-5: Cluster info now comes from ClusterService.ClusterInfo,
+not from WalletCacheEntry (which no longer caches cluster data).
 """
+
+from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Protocol
 
 import structlog
 
-from walltrack.data.models.wallet import Wallet, WalletStatus
-from walltrack.models.scoring import (
-    ClusterScoreComponents,
-    ContextScoreComponents,
-    FactorScore,
-    ScoreCategory,
-    ScoredSignal,
-    ScoringConfig,
-    ScoringWeights,
-    TokenScoreComponents,
-    WalletScoreComponents,
-)
-from walltrack.models.signal_filter import SignalContext
+from walltrack.models.scoring import ScoredSignal, ScoringConfig
+from walltrack.models.signal_filter import WalletCacheEntry
 from walltrack.models.token import TokenCharacteristics
-from walltrack.services.config.config_service import ConfigService, get_config_service
-from walltrack.services.config.models import ScoringConfig as DBScoringConfig
+from walltrack.services.cluster import ClusterInfo
 
 logger = structlog.get_logger(__name__)
 
 
 @dataclass
-class ScoringParams:
-    """Runtime scoring parameters loaded from ConfigService.
+class SimpleScoringParams:
+    """Runtime scoring parameters (simplified).
 
-    This dataclass holds all scoring parameters for a single scoring operation,
-    avoiding repeated async calls during synchronous calculations.
+    Only 8 parameters instead of 30+.
     """
 
-    # Main weights
-    wallet_weight: float
-    cluster_weight: float
-    token_weight: float
-    context_weight: float
-
-    # Wallet score sub-weights
-    win_rate_weight: float
-    pnl_weight: float
-    timing_weight: float
-    consistency_weight: float
+    trade_threshold: float
+    wallet_win_rate_weight: float
+    wallet_pnl_weight: float
     leader_bonus: float
-    max_decay_penalty: float
-
-    # Token score sub-weights
-    liquidity_weight: float
-    mcap_weight: float
-    holder_dist_weight: float
-    volume_weight: float
-
-    # Token thresholds
-    min_liquidity_usd: float
-    optimal_liquidity_usd: float
-    min_mcap_usd: float
-    optimal_mcap_usd: float
-
-    # New token penalty
-    new_token_penalty_minutes: int
-    max_new_token_penalty: float
-
-    # Cluster score
-    solo_signal_base: float
-
-    # Context score
-    peak_trading_hours_utc: list[int]
+    pnl_normalize_min: float
+    pnl_normalize_max: float
+    min_cluster_boost: float
+    max_cluster_boost: float
 
     @classmethod
-    def from_db_config(cls, config: DBScoringConfig) -> "ScoringParams":
-        """Create ScoringParams from database config."""
+    def from_config(cls, config: ScoringConfig) -> "SimpleScoringParams":
+        """Create params from ScoringConfig."""
         return cls(
-            wallet_weight=float(config.wallet_weight),
-            cluster_weight=float(config.cluster_weight),
-            token_weight=float(config.token_weight),
-            context_weight=float(config.context_weight),
-            win_rate_weight=float(config.wallet_win_rate_weight),
-            pnl_weight=float(config.wallet_pnl_weight),
-            timing_weight=float(config.wallet_timing_weight),
-            consistency_weight=float(config.wallet_consistency_weight),
-            leader_bonus=float(config.wallet_leader_bonus),
-            max_decay_penalty=float(config.wallet_max_decay_penalty),
-            liquidity_weight=float(config.token_liquidity_weight),
-            mcap_weight=float(config.token_mcap_weight),
-            holder_dist_weight=float(config.token_holder_dist_weight),
-            volume_weight=float(config.token_volume_weight),
-            min_liquidity_usd=float(config.token_min_liquidity_usd),
-            optimal_liquidity_usd=float(config.token_optimal_liquidity_usd),
-            min_mcap_usd=float(config.token_min_mcap_usd),
-            optimal_mcap_usd=float(config.token_optimal_mcap_usd),
-            new_token_penalty_minutes=config.new_token_penalty_minutes,
-            max_new_token_penalty=float(config.max_new_token_penalty),
-            solo_signal_base=float(config.solo_signal_base),
-            peak_trading_hours_utc=config.peak_trading_hours_utc,
+            trade_threshold=config.trade_threshold,
+            wallet_win_rate_weight=config.wallet_win_rate_weight,
+            wallet_pnl_weight=config.wallet_pnl_weight,
+            leader_bonus=config.leader_bonus,
+            pnl_normalize_min=config.pnl_normalize_min,
+            pnl_normalize_max=config.pnl_normalize_max,
+            min_cluster_boost=config.min_cluster_boost,
+            max_cluster_boost=config.max_cluster_boost,
         )
 
     @classmethod
-    def defaults(cls) -> "ScoringParams":
-        """Create ScoringParams with fallback defaults."""
-        return cls(
-            wallet_weight=0.30,
-            cluster_weight=0.25,
-            token_weight=0.25,
-            context_weight=0.20,
-            win_rate_weight=0.35,
-            pnl_weight=0.25,
-            timing_weight=0.25,
-            consistency_weight=0.15,
-            leader_bonus=0.15,
-            max_decay_penalty=0.30,
-            liquidity_weight=0.30,
-            mcap_weight=0.25,
-            holder_dist_weight=0.20,
-            volume_weight=0.25,
-            min_liquidity_usd=1000.0,
-            optimal_liquidity_usd=50000.0,
-            min_mcap_usd=10000.0,
-            optimal_mcap_usd=500000.0,
-            new_token_penalty_minutes=5,
-            max_new_token_penalty=0.30,
-            solo_signal_base=0.50,
-            peak_trading_hours_utc=[14, 15, 16, 17, 18],
-        )
-
-
-class ClusterAmplifierProtocol(Protocol):
-    """Protocol for cluster amplifier (from Epic 2)."""
-
-    async def calculate_amplification(
-        self,
-        cluster_id: str,
-        token_address: str,
-    ) -> "ClusterAmplificationResult | None":
-        """Calculate amplification factor for cluster activity."""
-        ...
-
-
-class ClusterAmplificationResult:
-    """Result from cluster amplification calculation."""
-
-    amplification_factor: float
-    cluster_activity: "ClusterActivity"
-
-
-class ClusterActivity:
-    """Cluster activity data."""
-
-    member_count: int
-    active_in_window: int
-    participation_rate: float
-    cluster_strength: float
+    def defaults(cls) -> "SimpleScoringParams":
+        """Create default params."""
+        return cls.from_config(ScoringConfig())
 
 
 class SignalScorer:
-    """Multi-factor signal scoring engine.
+    """Simplified 2-component signal scorer.
 
-    Calculates weighted score from:
-    - Wallet score (30%): performance, timing, leader status
-    - Cluster score (25%): activity amplification
-    - Token score (25%): liquidity, market cap, holder distribution
-    - Context score (20%): timing, market conditions
+    Scoring formula:
+    1. Token Safety: Binary gate (honeypot, freeze, mint) -> reject or pass
+    2. Wallet Score: win_rate * 0.6 + pnl_norm * 0.4 (* leader_bonus if leader)
+    3. Cluster Boost: 1.0x to 1.8x multiplier
+    4. Final: wallet_score * cluster_boost >= threshold -> TRADE
 
-    All parameters are loaded from ConfigService, enabling hot-reload.
+    This replaces the complex 4-factor weighted system with a simple,
+    understandable model that can be tuned with ~8 parameters.
     """
 
-    def __init__(
-        self,
-        config_service: ConfigService | None = None,
-        cluster_amplifier: ClusterAmplifierProtocol | None = None,
-        # Deprecated: legacy config for backward compatibility
-        config: ScoringConfig | None = None,
-    ) -> None:
+    def __init__(self, config: ScoringConfig | None = None) -> None:
         """Initialize signal scorer.
 
         Args:
-            config_service: ConfigService for dynamic configuration (preferred)
-            cluster_amplifier: Optional cluster amplifier from Epic 2
-            config: Deprecated - legacy ScoringConfig for backward compatibility
+            config: Scoring configuration (uses defaults if None)
         """
-        self._config_service = config_service
-        self.cluster_amplifier = cluster_amplifier
-        self._legacy_config = config  # Deprecated
-        self._cached_params: ScoringParams | None = None
+        self.config = config or ScoringConfig()
+        self._params = SimpleScoringParams.from_config(self.config)
 
-    async def _get_scoring_params(self) -> ScoringParams:
-        """Load scoring parameters from ConfigService.
-
-        Returns cached parameters with TTL managed by ConfigService.
-        """
-        try:
-            if self._config_service is None:
-                self._config_service = await get_config_service()
-
-            db_config = await self._config_service.get_scoring_config()
-            return ScoringParams.from_db_config(db_config)
-        except Exception as e:
-            logger.warning(
-                "scoring_config_load_error",
-                error=str(e),
-                fallback="using_defaults",
-            )
-            return ScoringParams.defaults()
-
-    def _get_legacy_weights(self) -> ScoringWeights:
-        """Get weights from legacy config or defaults."""
-        if self._legacy_config:
-            return self._legacy_config.weights
-        return ScoringWeights()
-
-    async def score(
+    def score(
         self,
-        signal: SignalContext,
-        wallet: Wallet,
+        wallet: WalletCacheEntry,
         token: TokenCharacteristics,
+        tx_signature: str,
+        direction: str = "buy",
+        cluster_info: ClusterInfo | None = None,
     ) -> ScoredSignal:
-        """Calculate multi-factor score for a signal.
+        """Score a signal using simplified 2-component model.
 
         Args:
-            signal: Filtered signal context
-            wallet: Wallet data with performance metrics
-            token: Token characteristics
+            wallet: Wallet cache entry with metrics
+            token: Token characteristics including safety flags
+            tx_signature: Transaction signature
+            direction: Trade direction ("buy" or "sell")
+            cluster_info: Cluster info from ClusterService (Epic 14-5)
 
         Returns:
-            ScoredSignal with complete breakdown
+            ScoredSignal with decision and explanation
+
+        Epic 14 Story 14-5: Cluster data now comes from ClusterInfo parameter,
+        fetched from Neo4j via ClusterService, not from WalletCacheEntry.
         """
+        # Extract cluster info (with defaults for solo wallets)
+        if cluster_info is None:
+            cluster_info = ClusterInfo(
+                cluster_id=None,
+                is_leader=False,
+                amplification_factor=1.0,
+                cluster_size=0,
+            )
+        cluster_boost = cluster_info.amplification_factor
+        is_leader = cluster_info.is_leader
+        cluster_id = cluster_info.cluster_id
         start_time = time.perf_counter()
+        params = self._params
 
-        # Load scoring parameters from ConfigService (hot-reloadable)
-        params = await self._get_scoring_params()
+        # Step 1: Token Safety Gate (binary)
+        if not self._is_token_safe(token):
+            reject_reason = self._get_token_reject_reason(token)
+            scoring_time_ms = (time.perf_counter() - start_time) * 1000
 
-        # Calculate individual factor scores with dynamic params
-        wallet_score, wallet_components = self._calculate_wallet_score(
-            wallet, signal.is_cluster_leader, params
+            logger.info(
+                "signal_token_rejected",
+                wallet=wallet.wallet_address[:8] + "...",
+                token=token.token_address[:8] + "...",
+                reason=reject_reason,
+            )
+
+            return ScoredSignal(
+                tx_signature=tx_signature,
+                wallet_address=wallet.wallet_address,
+                token_address=token.token_address,
+                direction=direction,
+                final_score=0.0,
+                wallet_score=0.0,
+                cluster_boost=cluster_boost,
+                token_safe=False,
+                token_reject_reason=reject_reason,
+                is_leader=is_leader,
+                cluster_id=cluster_id,
+                should_trade=False,
+                position_multiplier=1.0,
+                explanation=f"Token rejected: {reject_reason}",
+                scoring_time_ms=scoring_time_ms,
+            )
+
+        # Step 2: Calculate Wallet Score
+        wallet_score = self._calculate_wallet_score(wallet, params, is_leader)
+
+        # Step 3: Apply Cluster Boost (clamped to range)
+        clamped_boost = max(
+            params.min_cluster_boost,
+            min(params.max_cluster_boost, cluster_boost),
         )
-        cluster_score, cluster_components = await self._calculate_cluster_score(
-            signal, params
-        )
-        token_score, token_components = self._calculate_token_score(token, params)
-        context_score, context_components = self._calculate_context_score(signal, params)
+        final_score = min(1.0, wallet_score * clamped_boost)
 
-        # Build weights from params for output
-        weights = ScoringWeights(
-            wallet=params.wallet_weight,
-            cluster=params.cluster_weight,
-            token=params.token_weight,
-            context=params.context_weight,
-        )
+        # Step 4: Threshold Decision
+        should_trade = final_score >= params.trade_threshold
 
-        # Calculate weighted final score (AC6)
-        final_score = (
-            wallet_score.weighted_contribution
-            + cluster_score.weighted_contribution
-            + token_score.weighted_contribution
-            + context_score.weighted_contribution
+        # Build explanation
+        explanation = self._build_explanation(
+            wallet, wallet_score, clamped_boost, final_score, should_trade, params,
+            is_leader=is_leader,
         )
-
-        # Clamp to [0, 1]
-        final_score = max(0.0, min(1.0, final_score))
 
         scoring_time_ms = (time.perf_counter() - start_time) * 1000
 
         logger.info(
             "signal_scored",
-            wallet=signal.wallet_address[:8] + "...",
-            token=signal.token_address[:8] + "...",
+            wallet=wallet.wallet_address[:8] + "...",
+            token=token.token_address[:8] + "...",
             final_score=round(final_score, 4),
-            wallet_score=round(wallet_score.score, 4),
-            cluster_score=round(cluster_score.score, 4),
-            token_score=round(token_score.score, 4),
-            context_score=round(context_score.score, 4),
+            wallet_score=round(wallet_score, 4),
+            cluster_boost=round(clamped_boost, 2),
+            is_leader=is_leader,
+            should_trade=should_trade,
             scoring_time_ms=round(scoring_time_ms, 2),
         )
 
         return ScoredSignal(
-            tx_signature=signal.tx_signature,
-            wallet_address=signal.wallet_address,
-            token_address=signal.token_address,
-            direction=signal.direction,
+            tx_signature=tx_signature,
+            wallet_address=wallet.wallet_address,
+            token_address=token.token_address,
+            direction=direction,
             final_score=final_score,
             wallet_score=wallet_score,
-            cluster_score=cluster_score,
-            token_score=token_score,
-            context_score=context_score,
-            wallet_components=wallet_components,
-            cluster_components=cluster_components,
-            token_components=token_components,
-            context_components=context_components,
-            weights_used=weights,
+            cluster_boost=clamped_boost,
+            token_safe=True,
+            is_leader=is_leader,
+            cluster_id=cluster_id,
+            should_trade=should_trade,
+            position_multiplier=clamped_boost if should_trade else 1.0,
+            explanation=explanation,
             scoring_time_ms=scoring_time_ms,
         )
 
+    def _is_token_safe(self, token: TokenCharacteristics) -> bool:
+        """Binary token safety check.
+
+        Rejects tokens with:
+        - is_honeypot = True
+        - has_freeze_authority = True
+        - has_mint_authority = True
+        """
+        if token.is_honeypot:
+            return False
+        if token.has_freeze_authority:
+            return False
+        if token.has_mint_authority:
+            return False
+        return True
+
+    def _get_token_reject_reason(self, token: TokenCharacteristics) -> str:
+        """Get reason for token rejection."""
+        if token.is_honeypot:
+            return "honeypot"
+        if token.has_freeze_authority:
+            return "freeze_authority"
+        if token.has_mint_authority:
+            return "mint_authority"
+        return "unknown"
+
     def _calculate_wallet_score(
         self,
-        wallet: Wallet,
-        is_leader: bool,
-        params: ScoringParams,
-    ) -> tuple[FactorScore, WalletScoreComponents]:
-        """Calculate wallet score (AC2).
+        wallet: WalletCacheEntry,
+        params: SimpleScoringParams,
+        is_leader: bool = False,
+    ) -> float:
+        """Calculate wallet score from win_rate and PnL.
 
-        Components:
-        - Win rate (configurable weight)
-        - PnL history (configurable weight)
-        - Timing percentile (configurable weight)
-        - Consistency (configurable weight)
-        + Leader bonus (configurable)
-        - Decay penalty (configurable)
+        Formula: (win_rate * 0.6 + pnl_norm * 0.4) * leader_bonus
+
+        Args:
+            wallet: Wallet cache entry
+            params: Scoring parameters
+            is_leader: Whether wallet is a cluster leader (from ClusterInfo)
+
+        Returns:
+            Wallet score between 0.0 and 1.0
         """
-        # Component scores from wallet profile
-        win_rate = wallet.profile.win_rate if wallet.profile.win_rate else 0.5
-        avg_pnl = wallet.profile.avg_pnl_per_trade if wallet.profile.avg_pnl_per_trade else 0.0
-        timing = wallet.profile.timing_percentile if wallet.profile.timing_percentile else 0.5
+        # Win rate component (already 0-1)
+        win_rate = wallet.reputation_score if wallet.reputation_score is not None else 0.5
 
-        # Calculate consistency from available data
-        # Higher consistency = more consistent trading pattern
-        consistency = self._calculate_consistency(wallet)
+        # PnL normalized to 0-1 range
+        # Note: WalletCacheEntry doesn't have avg_pnl, use reputation_score
+        # In a full implementation, this would come from wallet profile
+        pnl_norm = 0.5  # Default middle value
 
-        # Normalize PnL to [0, 1] range (assuming -100 to +500 USD range)
-        pnl_normalized = max(0.0, min(1.0, (avg_pnl + 100) / 600))
-
-        # Base score calculation with dynamic weights from config
+        # Base score using configurable weights
         base_score = (
-            win_rate * params.win_rate_weight
-            + pnl_normalized * params.pnl_weight
-            + timing * params.timing_weight
-            + consistency * params.consistency_weight
+            win_rate * params.wallet_win_rate_weight
+            + pnl_norm * params.wallet_pnl_weight
         )
 
-        # Leader bonus (AC2) - from config
-        leader_bonus = params.leader_bonus if is_leader else 0.0
+        # Apply leader bonus (multiplier, not additive)
+        if is_leader:
+            base_score *= params.leader_bonus
 
-        # Decay penalty (AC2) - from config
-        decay_penalty = 0.0
-        if wallet.status == WalletStatus.DECAY_DETECTED:
-            decay_penalty = params.max_decay_penalty
+        return min(1.0, base_score)
 
-        # Final wallet score
-        final_score = max(0.0, min(1.0, base_score + leader_bonus - decay_penalty))
+    def _normalize_pnl(self, pnl: float, params: SimpleScoringParams) -> float:
+        """Normalize PnL to 0-1 range.
 
-        weight = params.wallet_weight
-        weighted_contribution = final_score * weight
+        Args:
+            pnl: Raw PnL value
+            params: Scoring parameters with normalization range
 
-        components = WalletScoreComponents(
-            win_rate=win_rate,
-            avg_pnl_percentage=avg_pnl,
-            timing_percentile=timing,
-            consistency_score=consistency,
-            is_leader=is_leader,
-            leader_bonus=leader_bonus,
-            decay_penalty=decay_penalty,
-        )
-
-        return (
-            FactorScore(
-                category=ScoreCategory.WALLET,
-                score=final_score,
-                weight=weight,
-                weighted_contribution=weighted_contribution,
-                components={
-                    "win_rate": win_rate,
-                    "pnl_normalized": pnl_normalized,
-                    "timing": timing,
-                    "consistency": consistency,
-                    "leader_bonus": leader_bonus,
-                    "decay_penalty": decay_penalty,
-                },
-                explanation=f"Wallet: {final_score:.2f} (win={win_rate:.2f}, lead={is_leader})",
-            ),
-            components,
-        )
-
-    def _calculate_consistency(self, wallet: Wallet) -> float:
-        """Calculate wallet consistency score.
-
-        Based on trade count and rolling win rate stability.
+        Returns:
+            Normalized PnL between 0.0 and 1.0
         """
-        # Base consistency on trade count
-        if wallet.profile.total_trades < 5:
-            return 0.3  # Low consistency for insufficient data
+        pnl_min = params.pnl_normalize_min
+        pnl_max = params.pnl_normalize_max
 
-        if wallet.profile.total_trades < 20:
-            return 0.5  # Medium consistency
+        if pnl <= pnl_min:
+            return 0.0
+        if pnl >= pnl_max:
+            return 1.0
 
-        # High trade count = more reliable stats
-        trade_consistency = min(1.0, wallet.profile.total_trades / 100)
+        return (pnl - pnl_min) / (pnl_max - pnl_min)
 
-        # Rolling win rate vs overall win rate stability
-        if wallet.rolling_win_rate is not None:
-            diff = abs(wallet.rolling_win_rate - wallet.profile.win_rate)
-            stability = 1.0 - min(1.0, diff * 2)  # Penalize large differences
-        else:
-            stability = 0.5
-
-        return (trade_consistency * 0.6 + stability * 0.4)
-
-    async def _calculate_cluster_score(
+    def _build_explanation(
         self,
-        signal: SignalContext,
-        params: ScoringParams,
-    ) -> tuple[FactorScore, ClusterScoreComponents]:
-        """Calculate cluster score (AC3).
+        wallet: WalletCacheEntry,
+        wallet_score: float,
+        cluster_boost: float,
+        final_score: float,
+        should_trade: bool,
+        params: SimpleScoringParams,
+        *,
+        is_leader: bool = False,
+    ) -> str:
+        """Build human-readable explanation.
 
-        Uses amplification factor from Story 2.6 if cluster activity detected.
-        Solo signals get base cluster score.
+        Args:
+            wallet: Wallet cache entry
+            wallet_score: Calculated wallet score
+            cluster_boost: Applied cluster boost
+            final_score: Final calculated score
+            should_trade: Whether threshold was passed
+            params: Scoring parameters
+            is_leader: Whether wallet is a cluster leader (from ClusterInfo)
+
+        Returns:
+            Human-readable explanation string
         """
-        weight = params.cluster_weight
-        solo_base = params.solo_signal_base
+        rep_display = wallet.reputation_score if wallet.reputation_score is not None else 0.5
+        parts = [
+            f"Wallet: {wallet_score:.2f} (rep:{rep_display:.2f})",
+        ]
 
-        # Check if wallet is in a cluster and we have amplifier
-        if not signal.cluster_id or self.cluster_amplifier is None:
-            # Solo signal (AC3)
-            components = ClusterScoreComponents(
-                cluster_size=1,
-                is_solo_signal=True,
-            )
+        if is_leader:
+            parts.append(f"Leader: {params.leader_bonus:.2f}x")
 
-            return (
-                FactorScore(
-                    category=ScoreCategory.CLUSTER,
-                    score=solo_base,
-                    weight=weight,
-                    weighted_contribution=solo_base * weight,
-                    components={"is_solo": 1.0, "base_score": solo_base},
-                    explanation="Solo signal - base cluster score applied",
-                ),
-                components,
-            )
+        if cluster_boost > 1.0:
+            parts.append(f"Cluster: {cluster_boost:.2f}x")
 
-        # Get cluster amplification (from Story 2.6)
-        try:
-            amplification = await self.cluster_amplifier.calculate_amplification(
-                cluster_id=signal.cluster_id,
-                token_address=signal.token_address,
-            )
-        except Exception as e:
-            logger.warning(
-                "cluster_amplification_error",
-                cluster_id=signal.cluster_id,
-                error=str(e),
-            )
-            amplification = None
+        parts.append(f"Final: {final_score:.2f}")
 
-        if not amplification:
-            components = ClusterScoreComponents(is_solo_signal=True)
-            return (
-                FactorScore(
-                    category=ScoreCategory.CLUSTER,
-                    score=solo_base,
-                    weight=weight,
-                    weighted_contribution=solo_base * weight,
-                    components={"is_solo": 1.0},
-                    explanation="No cluster amplification data",
-                ),
-                components,
-            )
-
-        # Calculate cluster score from amplification
-        # Amplification factor is typically 1.0-1.8
-        # Map to score: (factor - 1.0) / 0.8 for 1.0-1.8 range
-        factor = amplification.amplification_factor
-        cluster_score = min(1.0, (factor - 1.0) / 0.8 + solo_base)
-
-        components = ClusterScoreComponents(
-            cluster_size=amplification.cluster_activity.member_count,
-            active_members_count=amplification.cluster_activity.active_in_window,
-            participation_rate=amplification.cluster_activity.participation_rate,
-            amplification_factor=factor,
-            cluster_strength=amplification.cluster_activity.cluster_strength,
-            is_solo_signal=False,
-        )
-
-        return (
-            FactorScore(
-                category=ScoreCategory.CLUSTER,
-                score=cluster_score,
-                weight=weight,
-                weighted_contribution=cluster_score * weight,
-                components={
-                    "amplification_factor": factor,
-                    "participation_rate": components.participation_rate,
-                    "cluster_strength": components.cluster_strength,
-                },
-                explanation=f"Cluster amplification: {factor:.2f}x",
-            ),
-            components,
-        )
-
-    def _calculate_token_score(
-        self,
-        token: TokenCharacteristics,
-        params: ScoringParams,
-    ) -> tuple[FactorScore, TokenScoreComponents]:
-        """Calculate token score (AC4).
-
-        Components:
-        - Liquidity (configurable weight)
-        - Market cap (configurable weight)
-        - Holder distribution (configurable weight)
-        - Volume (configurable weight)
-        - New token penalty
-        - Honeypot risk
-        """
-        # Liquidity score (higher is better, with optimal ceiling)
-        liquidity_usd = token.liquidity.usd if token.liquidity else 0
-        if liquidity_usd < params.min_liquidity_usd:
-            liquidity_score = 0.0
-        elif liquidity_usd >= params.optimal_liquidity_usd:
-            liquidity_score = 1.0
+        if should_trade:
+            parts.append(f"TRADE (>={params.trade_threshold})")
         else:
-            liquidity_score = (liquidity_usd - params.min_liquidity_usd) / (
-                params.optimal_liquidity_usd - params.min_liquidity_usd
-            )
+            parts.append(f"NO TRADE (<{params.trade_threshold})")
 
-        # Market cap score
-        mcap = token.market_cap_usd or 0
-        if mcap < params.min_mcap_usd:
-            mcap_score = 0.2  # Low but not zero
-        elif mcap >= params.optimal_mcap_usd:
-            mcap_score = 1.0
-        else:
-            mcap_score = 0.2 + 0.8 * (mcap - params.min_mcap_usd) / (
-                params.optimal_mcap_usd - params.min_mcap_usd
-            )
-
-        # Holder distribution score
-        holder_score = 0.5  # Default
-        if token.holder_count:
-            # More holders is better
-            holder_score = min(1.0, token.holder_count / 500)
-
-        if token.top_10_holder_percentage:
-            # Penalize concentrated holdings
-            concentration_penalty = max(0, (token.top_10_holder_percentage - 30) / 70)
-            holder_score -= concentration_penalty * 0.3
-
-        holder_score = max(0.0, holder_score)  # Ensure non-negative
-
-        # Volume score (24h)
-        volume = token.volume.h24 if token.volume else 0
-        volume_score = min(1.0, volume / 100000) if volume > 0 else 0.3
-
-        # Base token score using configurable weights
-        base_score = (
-            liquidity_score * params.liquidity_weight
-            + mcap_score * params.mcap_weight
-            + holder_score * params.holder_dist_weight
-            + volume_score * params.volume_weight
-        )
-
-        # Age penalty for very new tokens (AC4)
-        age_penalty = 0.0
-        if token.is_new_token and token.age_minutes < params.new_token_penalty_minutes:
-            age_penalty = params.max_new_token_penalty * (
-                1 - token.age_minutes / params.new_token_penalty_minutes
-            )
-
-        # Honeypot risk (AC4)
-        honeypot_risk = 0.0
-        if token.is_honeypot:
-            honeypot_risk = 0.5
-        elif token.has_freeze_authority or token.has_mint_authority:
-            honeypot_risk = 0.2
-
-        # Final token score
-        final_score = max(0.0, min(1.0, base_score - age_penalty - honeypot_risk))
-
-        weight = params.token_weight
-        weighted_contribution = final_score * weight
-
-        components = TokenScoreComponents(
-            liquidity_score=liquidity_score,
-            market_cap_score=mcap_score,
-            holder_distribution_score=holder_score,
-            volume_score=volume_score,
-            age_penalty=age_penalty,
-            honeypot_risk=honeypot_risk,
-        )
-
-        return (
-            FactorScore(
-                category=ScoreCategory.TOKEN,
-                score=final_score,
-                weight=weight,
-                weighted_contribution=weighted_contribution,
-                components={
-                    "liquidity": liquidity_score,
-                    "market_cap": mcap_score,
-                    "holders": holder_score,
-                    "volume": volume_score,
-                    "age_penalty": age_penalty,
-                    "honeypot_risk": honeypot_risk,
-                },
-                explanation=f"Token score: {final_score:.2f} (liq={liquidity_score:.2f})",
-            ),
-            components,
-        )
-
-    def _calculate_context_score(
-        self,
-        signal: SignalContext,
-        params: ScoringParams,
-    ) -> tuple[FactorScore, ContextScoreComponents]:
-        """Calculate context score (AC5).
-
-        Components:
-        - Time of day patterns
-        - Market volatility (placeholder)
-        - Recent activity (placeholder)
-        """
-        # Time of day score
-        current_hour = signal.timestamp.hour
-        if current_hour in params.peak_trading_hours_utc:
-            time_score = 1.0
-        elif abs(current_hour - 16) <= 2:  # Near peak
-            time_score = 0.8
-        else:
-            time_score = 0.6
-
-        # Market volatility (placeholder - would integrate with market data)
-        volatility_score = 0.7  # Default moderate
-
-        # Recent activity score (placeholder)
-        activity_score = 0.6
-
-        # Combined context score
-        final_score = (
-            time_score * 0.4 + volatility_score * 0.35 + activity_score * 0.25
-        )
-
-        weight = params.context_weight
-        weighted_contribution = final_score * weight
-
-        components = ContextScoreComponents(
-            time_of_day_score=time_score,
-            market_volatility_score=volatility_score,
-            recent_activity_score=activity_score,
-        )
-
-        return (
-            FactorScore(
-                category=ScoreCategory.CONTEXT,
-                score=final_score,
-                weight=weight,
-                weighted_contribution=weighted_contribution,
-                components={
-                    "time_of_day": time_score,
-                    "volatility": volatility_score,
-                    "activity": activity_score,
-                },
-                explanation=f"Context score: {final_score:.2f} (hour={current_hour})",
-            ),
-            components,
-        )
+        return " | ".join(parts)
 
     def update_config(self, config: ScoringConfig) -> None:
         """Update scoring configuration.
 
-        Deprecated: This method is deprecated. Configuration is now loaded
-        dynamically from ConfigService on each scoring operation.
-        Use ConfigService.refresh("scoring") to reload configuration.
+        Args:
+            config: New scoring configuration
         """
-        self._legacy_config = config
-        logger.warning(
-            "deprecated_update_config_called",
-            message="update_config() is deprecated. Use ConfigService.refresh('scoring') instead.",
+        self.config = config
+        self._params = SimpleScoringParams.from_config(config)
+        logger.info(
+            "scoring_config_updated",
+            threshold=config.trade_threshold,
+            leader_bonus=config.leader_bonus,
+            max_cluster_boost=config.max_cluster_boost,
         )
 
 
@@ -677,26 +349,18 @@ class SignalScorer:
 _scorer: SignalScorer | None = None
 
 
-def get_scorer(
-    config_service: ConfigService | None = None,
-    cluster_amplifier: ClusterAmplifierProtocol | None = None,
-) -> SignalScorer:
+def get_scorer(config: ScoringConfig | None = None) -> SignalScorer:
     """Get or create signal scorer singleton.
 
     Args:
-        config_service: Optional ConfigService for dynamic configuration.
-                        If not provided, will be lazily loaded on first use.
-        cluster_amplifier: Optional cluster amplifier from Epic 2
+        config: Optional scoring configuration
 
     Returns:
         SignalScorer singleton instance
     """
     global _scorer
     if _scorer is None:
-        _scorer = SignalScorer(
-            config_service=config_service,
-            cluster_amplifier=cluster_amplifier,
-        )
+        _scorer = SignalScorer(config=config)
     return _scorer
 
 

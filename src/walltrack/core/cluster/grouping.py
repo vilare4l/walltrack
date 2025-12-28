@@ -334,3 +334,79 @@ class ClusterGrouper:
                 clusters.append(cluster)
 
         return clusters
+
+    async def create_cluster_from_members(
+        self, member_addresses: list[str]
+    ) -> str | None:
+        """
+        Create a new cluster from a list of wallet addresses.
+
+        Used by NetworkOnboarder for automatic cluster formation.
+
+        Args:
+            member_addresses: List of wallet addresses to form cluster
+
+        Returns:
+            New cluster ID or None if creation failed
+        """
+        if len(member_addresses) < self._min_cluster_size:
+            log.debug(
+                "not_enough_members_for_cluster",
+                count=len(member_addresses),
+                min_required=self._min_cluster_size,
+            )
+            return None
+
+        cluster = await self._create_cluster(member_addresses)
+        return cluster.id if cluster else None
+
+    async def add_members_to_cluster(
+        self, cluster_id: str, addresses: list[str]
+    ) -> int:
+        """
+        Add members to an existing cluster.
+
+        Used by NetworkOnboarder when merging into existing cluster.
+
+        Args:
+            cluster_id: ID of cluster to add to
+            addresses: Wallet addresses to add
+
+        Returns:
+            Number of members added
+        """
+        cluster = await self._queries.get_cluster(cluster_id)
+        if not cluster:
+            log.warning("cluster_not_found", cluster_id=cluster_id)
+            return 0
+
+        existing = {m.wallet_address for m in cluster.members}
+        added = 0
+
+        for address in addresses:
+            if address not in existing:
+                edge_count = await self._get_wallet_edge_count(address, addresses)
+                member = ClusterMember(
+                    wallet_address=address,
+                    join_reason="network_onboarding",
+                    connection_count=edge_count,
+                )
+                await self._add_member_to_cluster(cluster_id, member)
+                added += 1
+
+        if added > 0:
+            # Recalculate cohesion
+            all_addresses = list(existing) + [
+                a for a in addresses if a not in existing
+            ]
+            new_cohesion = await self._queries.calculate_cluster_cohesion(all_addresses)
+            await self._update_cluster_cohesion(cluster_id, new_cohesion)
+
+            log.info(
+                "members_added_to_cluster",
+                cluster_id=cluster_id,
+                added=added,
+                new_cohesion=new_cohesion,
+            )
+
+        return added

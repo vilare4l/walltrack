@@ -32,7 +32,10 @@ class FundingAnalyzer:
         self._min_funding = min_funding_sol
 
     async def analyze_wallet_funding(
-        self, wallet_address: str, lookback_days: int = 90  # noqa: ARG002
+        self,
+        wallet_address: str,
+        lookback_days: int = 90,  # noqa: ARG002
+        tx_history: list[dict[str, Any]] | None = None,
     ) -> list[FundingEdge]:
         """
         Analyze incoming SOL transfers to detect funding sources.
@@ -40,18 +43,28 @@ class FundingAnalyzer:
         Args:
             wallet_address: The wallet to analyze
             lookback_days: How far back to look for funding
+            tx_history: Optional transaction history to reuse (avoids API call)
 
         Returns:
             List of funding edges detected
         """
         log.info("analyzing_wallet_funding", wallet=wallet_address[:16])
 
-        # Get wallet transactions from Helius
-        transactions = await self._helius.get_wallet_transactions(
-            wallet=wallet_address,
-            tx_types=[SOL_TRANSFER_TYPE],
-            limit=100,
-        )
+        # Use provided tx_history or fetch from Helius
+        if tx_history is not None:
+            # Filter to SOL transfers from provided history
+            transactions = [
+                tx for tx in tx_history
+                if tx.get("type") == SOL_TRANSFER_TYPE
+                or tx.get("nativeTransfers")  # Has native SOL transfers
+            ]
+        else:
+            # Get wallet transactions from Helius
+            transactions = await self._helius.get_wallet_transactions(
+                wallet=wallet_address,
+                tx_types=[SOL_TRANSFER_TYPE],
+                limit=100,
+            )
 
         edges: list[FundingEdge] = []
 

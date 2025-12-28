@@ -6,7 +6,6 @@ with lifecycle columns added by V13__config_lifecycle.sql.
 
 from datetime import datetime
 from decimal import Decimal
-from typing import Optional
 
 from pydantic import BaseModel, Field
 
@@ -18,11 +17,11 @@ class ConfigBase(BaseModel):
     name: str
     status: str  # 'default', 'draft', 'active', 'archived'
     version: int = 1
-    description: Optional[str] = None
-    created_at: Optional[datetime] = None
-    created_by: Optional[str] = None
-    updated_at: Optional[datetime] = None
-    updated_by: Optional[str] = None
+    description: str | None = None
+    created_at: datetime | None = None
+    created_by: str | None = None
+    updated_at: datetime | None = None
+    updated_by: str | None = None
 
     class Config:
         from_attributes = True

@@ -5,9 +5,9 @@ Story 10.5-7: Price History Collection.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 import structlog
@@ -44,11 +44,11 @@ class PositionPriceMetrics(BaseModel):
     position_id: UUID
     peak_price: Decimal
     peak_at: datetime
-    current_price: Optional[Decimal] = None
-    last_update: Optional[datetime] = None
+    current_price: Decimal | None = None
+    last_update: datetime | None = None
     max_drawdown_pct: Decimal = Field(default=Decimal("0"))
     current_drawdown_pct: Decimal = Field(default=Decimal("0"))
-    unrealized_pnl_at_peak: Optional[Decimal] = None
+    unrealized_pnl_at_peak: Decimal | None = None
 
 
 class PriceHistoryRepository:
@@ -252,8 +252,8 @@ class PriceHistoryRepository:
     async def get_history(
         self,
         position_id: UUID | str,
-        start: Optional[datetime] = None,
-        end: Optional[datetime] = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
         limit: int = 1000,
     ) -> list[PricePoint]:
         """
@@ -299,8 +299,8 @@ class PriceHistoryRepository:
     async def get_compressed_history(
         self,
         position_id: UUID | str,
-        start: Optional[datetime] = None,
-        end: Optional[datetime] = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
         limit: int = 1000,
     ) -> list[OHLCCandle]:
         """
@@ -349,7 +349,7 @@ class PriceHistoryRepository:
     async def get_metrics(
         self,
         position_id: UUID | str,
-    ) -> Optional[PositionPriceMetrics]:
+    ) -> PositionPriceMetrics | None:
         """
         Get price metrics for a position.
 
@@ -401,7 +401,7 @@ class PriceHistoryRepository:
     async def get_latest_price(
         self,
         position_id: UUID | str,
-    ) -> Optional[PricePoint]:
+    ) -> PricePoint | None:
         """
         Get most recent price for a position.
 
@@ -469,7 +469,7 @@ class PriceHistoryRepository:
 
 
 # Singleton
-_price_history_repo: Optional[PriceHistoryRepository] = None
+_price_history_repo: PriceHistoryRepository | None = None
 
 
 async def get_price_history_repository() -> PriceHistoryRepository:

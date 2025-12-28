@@ -6,16 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from walltrack.data.models.wallet import Wallet, WalletProfile, WalletStatus
-from walltrack.models.scoring import (
-    ClusterScoreComponents,
-    ContextScoreComponents,
-    FactorScore,
-    ScoreCategory,
-    ScoredSignal,
-    ScoringWeights,
-    TokenScoreComponents,
-    WalletScoreComponents,
-)
+from walltrack.models.scoring import ScoredSignal
 from walltrack.models.signal_filter import (
     FilterResult,
     FilterStatus,
@@ -69,59 +60,24 @@ def sample_signal_context(sample_swap_event: ParsedSwapEvent) -> SignalContext:
 
 @pytest.fixture
 def sample_scored_signal(sample_swap_event: ParsedSwapEvent) -> ScoredSignal:
-    """Create sample scored signal for testing."""
+    """Create sample scored signal for testing.
+
+    Epic 14 Simplification: Uses the new flat ScoredSignal model.
+    """
     return ScoredSignal(
         tx_signature=sample_swap_event.tx_signature,
         wallet_address=sample_swap_event.wallet_address,
         token_address=sample_swap_event.token_address,
         direction="buy",
         final_score=0.75,
-        wallet_score=FactorScore(
-            category=ScoreCategory.WALLET,
-            score=0.8, weight=0.35, weighted_contribution=0.28
-        ),
-        cluster_score=FactorScore(
-            category=ScoreCategory.CLUSTER,
-            score=0.7, weight=0.20, weighted_contribution=0.14
-        ),
-        token_score=FactorScore(
-            category=ScoreCategory.TOKEN,
-            score=0.6, weight=0.25, weighted_contribution=0.15
-        ),
-        context_score=FactorScore(
-            category=ScoreCategory.CONTEXT,
-            score=0.9, weight=0.20, weighted_contribution=0.18
-        ),
-        wallet_components=WalletScoreComponents(
-            win_rate=0.8,
-            score=0.75,
-            consistency=0.7,
-            timing=0.6,
-            is_cluster_leader=True,
-            decay_detected=False,
-        ),
-        cluster_components=ClusterScoreComponents(
-            has_cluster=True,
-            cluster_size=5,
-            leader_score=0.8,
-            follower_count=4,
-            cluster_correlation=0.75,
-            recent_hits=3,
-        ),
-        token_components=TokenScoreComponents(
-            liquidity=0.7,
-            market_cap=0.6,
-            age=0.8,
-            volume=0.5,
-            is_honeypot=False,
-        ),
-        context_components=ContextScoreComponents(
-            timing=0.9,
-            signal_strength=0.85,
-            cluster_activity=0.8,
-            market_conditions=0.7,
-        ),
-        weights_used=ScoringWeights(),
+        wallet_score=0.80,
+        cluster_boost=1.2,
+        token_safe=True,
+        is_leader=True,
+        cluster_id="cluster-1",
+        should_trade=True,
+        position_multiplier=1.2,
+        explanation="Wallet: 0.80 | Cluster: 1.20x | Final: 0.75 | TRADE (>=0.65)",
     )
 
 
@@ -229,12 +185,14 @@ class TestSignalPipelineProcessing:
         mock_wallet_repo: MagicMock,
         mock_token_fetcher: MagicMock,
     ):
-        """Test processing signal that passes filter and threshold."""
+        """Test processing signal that passes filter and threshold.
+
+        Epic 14 Story 14-5: cluster_id/is_leader removed from WalletCacheEntry.
+        Cluster info now comes from ClusterService via ClusterInfo.
+        """
         entry = WalletCacheEntry(
             wallet_address=sample_swap_event.wallet_address,
             is_monitored=True,
-            cluster_id="cluster-1",
-            is_leader=True,
             reputation_score=0.85,
         )
 

@@ -1,167 +1,119 @@
-"""Threshold checker for trade eligibility."""
+"""Simplified threshold checker for trade eligibility.
+
+Epic 14 Simplification:
+- Single threshold (0.65) instead of dual HIGH/STANDARD thresholds
+- Token safety is a binary gate in SignalScorer (not here)
+- position_multiplier equals cluster_boost
+"""
 
 import structlog
 
-from walltrack.models.scoring import ScoredSignal
-from walltrack.models.threshold import (
-    ConvictionTier,
-    EligibilityStatus,
-    ThresholdConfig,
-    ThresholdResult,
-    TradeEligibleSignal,
-)
-from walltrack.models.token import TokenCharacteristics
+from walltrack.models.scoring import ScoredSignal, ScoringConfig
 
 logger = structlog.get_logger(__name__)
 
-# No-trade multiplier (signal below threshold = no position)
-NO_TRADE_MULTIPLIER = 0.0
+
+class ThresholdResult:
+    """Result of threshold check (simplified)."""
+
+    def __init__(
+        self,
+        passed: bool,
+        score: float,
+        threshold: float,
+        position_multiplier: float,
+    ) -> None:
+        """Initialize threshold result.
+
+        Args:
+            passed: Whether signal passed threshold
+            score: Final signal score
+            threshold: Threshold used for comparison
+            position_multiplier: Position size multiplier (equals cluster_boost)
+        """
+        self.passed = passed
+        self.score = score
+        self.threshold = threshold
+        self.position_multiplier = position_multiplier
 
 
 class ThresholdChecker:
-    """Applies scoring threshold to determine trade eligibility.
+    """Simplified single-threshold checker.
 
-    Implements position sizing tiers based on score ranges.
+    Replaces the dual HIGH/STANDARD threshold system with a single
+    threshold at 0.65. Position sizing is determined by cluster_boost,
+    not conviction tiers.
     """
 
-    def __init__(self, config: ThresholdConfig | None = None) -> None:
+    def __init__(self, config: ScoringConfig | None = None) -> None:
         """Initialize threshold checker.
 
         Args:
-            config: Threshold configuration
+            config: Scoring configuration with threshold
         """
-        self.config = config or ThresholdConfig()
+        self.config = config or ScoringConfig()
 
-    def check(
-        self,
-        scored_signal: ScoredSignal,
-        token: TokenCharacteristics | None = None,
-    ) -> ThresholdResult:
-        """Check if signal meets threshold for trade eligibility.
+    def check(self, signal: ScoredSignal) -> ThresholdResult:
+        """Check if signal passes trade threshold.
 
         Args:
-            scored_signal: Signal with calculated score
-            token: Optional token characteristics for additional filters
+            signal: Scored signal to check
 
         Returns:
-            ThresholdResult with eligibility status and position sizing
+            ThresholdResult with pass/fail and multiplier
         """
-        score = scored_signal.final_score
-        filter_failures: list[str] = []
-
-        # Additional safety checks
-        passed_liquidity = True
-        passed_honeypot = True
-
-        if token and self.config.require_min_liquidity:
-            liquidity = token.liquidity.usd if token.liquidity else 0
-            if liquidity < self.config.min_liquidity_usd:
-                passed_liquidity = False
-                filter_failures.append(
-                    f"liquidity_below_min: {liquidity} < {self.config.min_liquidity_usd}"
-                )
-
-        if token and self.config.require_non_honeypot and token.is_honeypot:
-            passed_honeypot = False
-            filter_failures.append("honeypot_detected")
-
-        # Determine eligibility status (AC1, AC2, AC3)
-        if score >= self.config.high_conviction_threshold:
-            status = EligibilityStatus.HIGH_CONVICTION
-            tier = ConvictionTier.HIGH
-            multiplier = self.config.high_conviction_multiplier
-        elif score >= self.config.trade_threshold:
-            status = EligibilityStatus.TRADE_ELIGIBLE
-            tier = ConvictionTier.STANDARD
-            multiplier = self.config.standard_multiplier
-        else:
-            status = EligibilityStatus.BELOW_THRESHOLD
-            tier = ConvictionTier.NONE
-            multiplier = NO_TRADE_MULTIPLIER
-
-        # Apply filter failures - downgrade to below threshold
-        if filter_failures:
-            status = EligibilityStatus.BELOW_THRESHOLD
-            tier = ConvictionTier.NONE
-            multiplier = NO_TRADE_MULTIPLIER
-
-        # Calculate margin above threshold (for analysis)
-        margin = None
-        if status != EligibilityStatus.BELOW_THRESHOLD:
-            margin = score - self.config.trade_threshold
-
-        result = ThresholdResult(
-            tx_signature=scored_signal.tx_signature,
-            wallet_address=scored_signal.wallet_address,
-            token_address=scored_signal.token_address,
-            final_score=score,
-            eligibility_status=status,
-            conviction_tier=tier,
-            position_multiplier=multiplier,
-            threshold_used=self.config.trade_threshold,
-            margin_above_threshold=margin,
-            passed_liquidity_check=passed_liquidity,
-            passed_honeypot_check=passed_honeypot,
-            filter_failures=filter_failures,
-        )
-
-        # Log result
-        if status == EligibilityStatus.BELOW_THRESHOLD:
+        # Token safety is handled in SignalScorer - if token_safe is False,
+        # the signal has already been rejected
+        if not signal.token_safe:
             logger.info(
                 "signal_below_threshold",
-                wallet=scored_signal.wallet_address[:8] + "...",
-                token=scored_signal.token_address[:8] + "...",
-                score=round(score, 4),
+                wallet=signal.wallet_address[:8] + "...",
+                token=signal.token_address[:8] + "...",
+                reason=signal.token_reject_reason,
+            )
+            return ThresholdResult(
+                passed=False,
+                score=0.0,
                 threshold=self.config.trade_threshold,
-                filter_failures=filter_failures,
+                position_multiplier=1.0,
+            )
+
+        passed = signal.final_score >= self.config.trade_threshold
+
+        if passed:
+            logger.info(
+                "signal_trade_eligible",
+                wallet=signal.wallet_address[:8] + "...",
+                token=signal.token_address[:8] + "...",
+                score=round(signal.final_score, 4),
+                multiplier=round(signal.cluster_boost, 2),
             )
         else:
             logger.info(
-                "signal_trade_eligible",
-                wallet=scored_signal.wallet_address[:8] + "...",
-                token=scored_signal.token_address[:8] + "...",
-                score=round(score, 4),
-                tier=tier.value,
-                multiplier=multiplier,
+                "signal_below_threshold",
+                wallet=signal.wallet_address[:8] + "...",
+                token=signal.token_address[:8] + "...",
+                score=round(signal.final_score, 4),
+                threshold=self.config.trade_threshold,
             )
 
-        return result
-
-    def create_trade_eligible_signal(
-        self,
-        scored_signal: ScoredSignal,
-        threshold_result: ThresholdResult,
-        amount_sol: float,
-    ) -> TradeEligibleSignal | None:
-        """Create trade-eligible signal ready for execution.
-
-        Returns None if signal didn't pass threshold.
-        """
-        if threshold_result.eligibility_status == EligibilityStatus.BELOW_THRESHOLD:
-            return None
-
-        return TradeEligibleSignal(
-            tx_signature=scored_signal.tx_signature,
-            wallet_address=scored_signal.wallet_address,
-            token_address=scored_signal.token_address,
-            direction=scored_signal.direction,
-            amount_sol=amount_sol,
-            final_score=scored_signal.final_score,
-            conviction_tier=threshold_result.conviction_tier,
-            position_multiplier=threshold_result.position_multiplier,
-            wallet_score=scored_signal.wallet_score.score,
-            cluster_score=scored_signal.cluster_score.score,
-            token_score=scored_signal.token_score.score,
-            context_score=scored_signal.context_score.score,
+        return ThresholdResult(
+            passed=passed,
+            score=signal.final_score,
+            threshold=self.config.trade_threshold,
+            position_multiplier=signal.cluster_boost if passed else 1.0,
         )
 
-    def update_config(self, config: ThresholdConfig) -> None:
-        """Update threshold configuration (hot-reload)."""
+    def update_config(self, config: ScoringConfig) -> None:
+        """Update threshold configuration.
+
+        Args:
+            config: New scoring configuration
+        """
         self.config = config
         logger.info(
             "threshold_config_updated",
             trade_threshold=config.trade_threshold,
-            high_conviction_threshold=config.high_conviction_threshold,
         )
 
 
@@ -169,8 +121,15 @@ class ThresholdChecker:
 _checker: ThresholdChecker | None = None
 
 
-def get_checker(config: ThresholdConfig | None = None) -> ThresholdChecker:
-    """Get or create threshold checker singleton."""
+def get_checker(config: ScoringConfig | None = None) -> ThresholdChecker:
+    """Get or create threshold checker singleton.
+
+    Args:
+        config: Optional scoring configuration
+
+    Returns:
+        ThresholdChecker singleton instance
+    """
     global _checker
     if _checker is None:
         _checker = ThresholdChecker(config=config)

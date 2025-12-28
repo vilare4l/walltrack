@@ -154,7 +154,7 @@ class TestRenderActivePosition:
 
         result = render_active_position(position)
 
-        assert "Prochain TP" in result
+        assert "Next TP in:" in result
 
 
 class TestRenderClosedPosition:
@@ -176,10 +176,9 @@ class TestRenderClosedPosition:
 
         result = render_closed_position(position)
 
-        assert "Résultat Final" in result
+        assert "Final Result" in result
         assert "take_profit" in result
         assert "🎯" in result  # Take profit emoji
-        assert "What-If" in result
 
     def test_different_exit_types(self) -> None:
         """Test different exit type emojis."""
@@ -293,7 +292,8 @@ class TestOpenSidebar:
         """Test opening with empty ID."""
         result = await open_sidebar("")
 
-        container_update, content, whatif_update, strategy_update, pos_id = result
+        # Returns 4 values: container_update, content, strategy_update, pos_id
+        container_update, content, strategy_update, pos_id = result
         assert pos_id is None
 
     @pytest.mark.asyncio
@@ -307,7 +307,7 @@ class TestOpenSidebar:
 
             result = await open_sidebar("nonexistent")
 
-        _, content, _, _, pos_id = result
+        _, content, _, pos_id = result
         assert "not found" in content
         assert pos_id is None
 
@@ -332,15 +332,14 @@ class TestOpenSidebar:
 
             result = await open_sidebar("active-pos-123")
 
-        container_update, content, whatif_update, strategy_update, pos_id = result
+        container_update, content, strategy_update, pos_id = result
         assert pos_id == "active-pos-123"
-        # Strategy visible, whatif hidden for active
-        assert not whatif_update.get("visible", True)  # whatif hidden
-        assert strategy_update.get("visible", False)  # strategy visible
+        # Strategy visible for active position
+        assert strategy_update.get("visible", False) is True
 
     @pytest.mark.asyncio
     async def test_open_closed_position(self) -> None:
-        """Test opening closed position shows whatif button."""
+        """Test opening closed position hides strategy button."""
         position = {
             "id": "closed-pos-123",
             "status": "closed",
@@ -360,8 +359,7 @@ class TestOpenSidebar:
 
             result = await open_sidebar("closed-pos-123")
 
-        container_update, content, whatif_update, strategy_update, pos_id = result
+        container_update, content, strategy_update, pos_id = result
         assert pos_id == "closed-pos-123"
-        # Whatif visible, strategy hidden for closed
-        assert whatif_update.get("visible", False)  # whatif visible
-        assert not strategy_update.get("visible", True)  # strategy hidden
+        # Strategy hidden for closed position
+        assert strategy_update.get("visible", True) is False

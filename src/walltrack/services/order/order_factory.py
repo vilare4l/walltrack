@@ -1,7 +1,6 @@
 """Factory for creating orders."""
 
 from decimal import Decimal
-from typing import Optional
 
 from walltrack.models.order import (
     Order,
@@ -30,7 +29,7 @@ class OrderFactory:
         token_address: str,
         amount_sol: Decimal,
         expected_price: Decimal,
-        token_symbol: Optional[str] = None,
+        token_symbol: str | None = None,
         max_slippage_bps: int = 100,
     ) -> Order:
         """

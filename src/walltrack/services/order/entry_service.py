@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 import structlog
 
@@ -60,7 +60,7 @@ class EntryOrderService:
         self.price_oracle = price_oracle
         self.order_factory = order_factory
 
-    async def process_signal(self, signal: SignalLogEntry) -> Optional[Order]:
+    async def process_signal(self, signal: SignalLogEntry) -> Order | None:
         """
         Process a validated signal and create entry order.
 
@@ -206,7 +206,7 @@ class EntryOrderService:
         self,
         signal: SignalLogEntry,
         status: str,
-        error: Optional[str],
+        error: str | None,
     ) -> None:
         """
         Update signal execution status.
@@ -254,7 +254,7 @@ class EntryOrderService:
             attempts=order.attempt_count,
         )
 
-    async def retry_failed_order(self, order: Order) -> Optional[Order]:
+    async def retry_failed_order(self, order: Order) -> Order | None:
         """
         Retry a failed order.
 
@@ -292,7 +292,7 @@ class EntryOrderService:
 
 
 # Singleton
-_entry_service: Optional[EntryOrderService] = None
+_entry_service: EntryOrderService | None = None
 
 
 async def get_entry_order_service() -> EntryOrderService:

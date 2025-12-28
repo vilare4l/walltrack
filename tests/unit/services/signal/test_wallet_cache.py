@@ -1,4 +1,8 @@
-"""Unit tests for wallet cache service."""
+"""Unit tests for wallet cache service.
+
+Epic 14 Story 14-5: Updated to remove cluster caching tests.
+Cluster data is now fetched via ClusterService.
+"""
 
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
@@ -331,3 +335,45 @@ class TestWalletCacheRefresh:
 
         assert "new_wallet" in cache._monitored_set
         assert "new_blacklisted" in cache._blacklist_set
+
+
+class TestWalletCacheNoClusterData:
+    """Tests confirming cluster data is not cached.
+
+    Epic 14 Story 14-5: Cluster data removed from WalletCache.
+    Use ClusterService for cluster info instead.
+    """
+
+    @pytest.mark.asyncio
+    async def test_cache_entry_has_no_cluster_fields(self, mock_wallet_repo: MagicMock):
+        """Cache entries do not have cluster_id or is_leader fields."""
+        monitored_wallet = MagicMock()
+        monitored_wallet.address = "wallet123"
+        monitored_wallet.score = 0.8
+
+        mock_wallet_repo.get_active_wallets.return_value = [monitored_wallet]
+
+        cache = WalletCache(mock_wallet_repo, max_size=100, ttl_seconds=300)
+        await cache.initialize()
+
+        entry = cache._cache["wallet123"]
+
+        # These fields should not exist on the model
+        assert not hasattr(entry, "cluster_id")
+        assert not hasattr(entry, "is_leader")
+
+    @pytest.mark.asyncio
+    async def test_cache_init_does_not_require_neo4j(self, mock_wallet_repo: MagicMock):
+        """Cache can be initialized without Neo4j client."""
+        monitored_wallet = MagicMock()
+        monitored_wallet.address = "wallet123"
+        monitored_wallet.score = 0.8
+
+        mock_wallet_repo.get_active_wallets.return_value = [monitored_wallet]
+
+        # No neo4j parameter needed
+        cache = WalletCache(mock_wallet_repo, max_size=100, ttl_seconds=300)
+        await cache.initialize()
+
+        assert cache._initialized is True
+        assert "wallet123" in cache._cache

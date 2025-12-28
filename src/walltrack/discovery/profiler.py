@@ -9,7 +9,7 @@ from typing import Any
 import structlog
 
 from walltrack.config.settings import get_settings
-from walltrack.data.models.wallet import Wallet, WalletProfile, WalletStatus
+from walltrack.data.models.wallet import DiscoverySource, Wallet, WalletProfile, WalletStatus
 from walltrack.data.supabase.repositories.wallet_repo import WalletRepository
 from walltrack.services.helius.client import HeliusClient
 
@@ -53,7 +53,8 @@ class WalletProfiler:
         # Get existing wallet or create new
         wallet = await self.wallet_repo.get_by_address(address)
         if not wallet:
-            wallet = Wallet(address=address)
+            # Epic 14 Story 14-5: Set discovery_source for new wallets
+            wallet = Wallet(address=address, discovery_source=DiscoverySource.MANUAL)
 
         # Check if recent profile exists
         if (

@@ -10,12 +10,13 @@ from typing import TYPE_CHECKING
 
 import structlog
 
-from walltrack.models.order import Order, OrderStatus
+from walltrack.models.order import Order
 
 if TYPE_CHECKING:
+    from solders.keypair import Keypair
+
     from walltrack.data.supabase.repositories.order_repo import OrderRepository
     from walltrack.services.jupiter.client import JupiterClient
-    from solders.keypair import Keypair
 
 logger = structlog.get_logger(__name__)
 
@@ -246,10 +247,9 @@ class OrderExecutor:
             # BUY: price = input_amount (SOL) / output_amount (tokens)
             if quote.output_amount > 0:
                 return Decimal(str(quote.input_amount)) / Decimal(str(quote.output_amount))
-        else:
-            # SELL: price = output_amount (SOL) / input_amount (tokens)
-            if quote.input_amount > 0:
-                return Decimal(str(quote.output_amount)) / Decimal(str(quote.input_amount))
+        # SELL: price = output_amount (SOL) / input_amount (tokens)
+        elif quote.input_amount > 0:
+            return Decimal(str(quote.output_amount)) / Decimal(str(quote.input_amount))
 
         # Fallback to expected price
         return order.expected_price
@@ -284,12 +284,13 @@ async def get_order_executor() -> OrderExecutor:
     global _executor
 
     if _executor is None:
+        from solders.keypair import Keypair
+
         from walltrack.config.wallet_settings import get_wallet_settings
         from walltrack.data.supabase.repositories.order_repo import (
             get_order_repository,
         )
         from walltrack.services.jupiter.client import get_jupiter_client
-        from solders.keypair import Keypair
 
         wallet_settings = get_wallet_settings()
         keypair = Keypair.from_base58_string(wallet_settings.private_key)

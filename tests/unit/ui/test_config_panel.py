@@ -1,118 +1,80 @@
-"""Unit tests for scoring configuration panel."""
+"""Unit tests for simplified scoring configuration panel.
+
+Epic 14 Simplification: Tests updated for 2-component scoring model.
+"""
 
 from walltrack.constants.scoring import (
-    DEFAULT_CLUSTER_WEIGHT,
-    DEFAULT_CONTEXT_WEIGHT,
-    DEFAULT_TOKEN_WEIGHT,
-    DEFAULT_WALLET_WEIGHT,
-)
-from walltrack.constants.threshold import (
-    DEFAULT_HIGH_CONVICTION_THRESHOLD,
+    DEFAULT_LEADER_BONUS,
+    DEFAULT_MAX_CLUSTER_BOOST,
+    DEFAULT_MIN_CLUSTER_BOOST,
+    DEFAULT_PNL_NORMALIZE_MAX,
+    DEFAULT_PNL_NORMALIZE_MIN,
     DEFAULT_TRADE_THRESHOLD,
+    DEFAULT_WALLET_PNL_WEIGHT,
+    DEFAULT_WALLET_WIN_RATE_WEIGHT,
 )
 from walltrack.ui.components.config_panel import (
     calculate_preview_score,
-    calculate_sum,
-    create_weights_chart,
-    normalize_weights,
+    create_scoring_chart,
+    validate_wallet_weights,
 )
 
 
-class TestWeightCalculations:
-    """Tests for weight calculation functions."""
+class TestWalletWeightValidation:
+    """Tests for wallet weight validation."""
 
-    def test_calculate_sum_valid(self):
-        """Test sum calculation with valid weights."""
-        result = calculate_sum(0.3, 0.25, 0.25, 0.2)
+    def test_validate_weights_valid(self):
+        """Test validation with valid weights that sum to 1.0."""
+        result = validate_wallet_weights(0.6, 0.4)
 
-        assert "1.000" in result
+        assert "1.00" in result
         assert "valid" in result
 
-    def test_calculate_sum_invalid(self):
-        """Test sum calculation with invalid weights."""
-        result = calculate_sum(0.3, 0.3, 0.3, 0.3)
+    def test_validate_weights_invalid(self):
+        """Test validation with invalid weights that don't sum to 1.0."""
+        result = validate_wallet_weights(0.5, 0.3)
 
-        assert "1.200" in result
-        assert "must be 1.0" in result
+        assert "0.80" in result
+        assert "should be 1.0" in result
 
-    def test_calculate_sum_close_to_one(self):
-        """Test sum calculation with floating point near 1.0."""
-        result = calculate_sum(0.30, 0.25, 0.25, 0.2)
+    def test_validate_weights_exact_match(self):
+        """Test validation with exact default weights."""
+        result = validate_wallet_weights(
+            DEFAULT_WALLET_WIN_RATE_WEIGHT,
+            DEFAULT_WALLET_PNL_WEIGHT,
+        )
 
         assert "valid" in result
 
 
-class TestNormalizeWeights:
-    """Tests for weight normalization."""
+class TestScoringChart:
+    """Tests for scoring chart creation."""
 
-    def test_normalize_above_one(self):
-        """Test normalizing weights that sum to > 1."""
-        w, c, t, x, msg, chart = normalize_weights(0.4, 0.3, 0.2, 0.1)
-
-        total = w + c + t + x
-        assert abs(total - 1.0) < 0.001
-        assert "Normalized" in msg
-        assert chart is not None
-
-    def test_normalize_below_one(self):
-        """Test normalizing weights that sum to < 1."""
-        w, c, t, x, msg, _chart = normalize_weights(0.2, 0.15, 0.1, 0.05)
-
-        total = w + c + t + x
-        assert abs(total - 1.0) < 0.001
-        assert "Normalized" in msg
-
-    def test_normalize_zero_weights(self):
-        """Test normalizing all zero weights."""
-        w, c, t, x, msg, _chart = normalize_weights(0, 0, 0, 0)
-
-        assert w == 0.25
-        assert c == 0.25
-        assert t == 0.25
-        assert x == 0.25
-        assert "equal weights" in msg
-
-    def test_normalize_preserves_ratios(self):
-        """Test normalization preserves relative ratios."""
-        w, c, t, x, _msg, _chart = normalize_weights(0.4, 0.3, 0.2, 0.1)
-
-        # Original ratio: 4:3:2:1
-        assert w > c > t > x
-        # Wallet should be 40% of total
-        assert abs(w - 0.4) < 0.001
-
-
-class TestWeightsChart:
-    """Tests for weights chart creation."""
-
-    def test_create_chart(self):
+    def test_create_chart_basic(self):
         """Test chart creation with valid weights."""
-        fig = create_weights_chart(0.3, 0.25, 0.25, 0.2)
+        fig = create_scoring_chart(0.6, 0.4)
 
         assert fig is not None
-        assert fig.layout.title.text == "Score Weight Distribution"
+        assert fig.layout.title.text == "Wallet Score Composition"
         assert len(fig.data) == 1
-        assert fig.data[0].type == "pie"
-
-    def test_chart_labels(self):
-        """Test chart has correct labels."""
-        fig = create_weights_chart(0.3, 0.25, 0.25, 0.2)
-
-        labels = fig.data[0].labels
-        assert "Wallet" in labels[0]
-        assert "Cluster" in labels[1]
-        assert "Token" in labels[2]
-        assert "Context" in labels[3]
+        assert fig.data[0].type == "bar"
 
     def test_chart_values(self):
         """Test chart has correct values."""
-        fig = create_weights_chart(0.4, 0.3, 0.2, 0.1)
+        fig = create_scoring_chart(0.7, 0.3)
 
-        values = fig.data[0].values
-        assert values[0] == 0.4
+        values = fig.data[0].x
+        assert len(values) == 2
+        assert values[0] == 0.7
         assert values[1] == 0.3
-        assert values[2] == 0.2
-        assert values[3] == 0.1
+
+    def test_chart_labels(self):
+        """Test chart has correct labels."""
+        fig = create_scoring_chart(0.6, 0.4)
+
+        labels = fig.data[0].y
+        assert "Win Rate" in labels[0]
+        assert "PnL" in labels[1]
 
 
 class TestPreviewScoreCalculation:
@@ -123,112 +85,115 @@ class TestPreviewScoreCalculation:
         result = calculate_preview_score(
             win_rate=0.6,
             pnl=50,
-            timing=0.5,
             is_leader=False,
-            cluster_size=1,
-            liquidity=10000,
-            market_cap=100000,
-            age_minutes=30,
+            cluster_boost=1.0,
+            win_rate_weight=0.6,
+            pnl_weight=0.4,
+            leader_bonus=1.15,
+            trade_threshold=0.65,
         )
 
         assert "Final Score:" in result
-        assert "Eligibility:" in result
-        assert "Wallet" in result
-        assert "Cluster" in result
-        assert "Token" in result
-        assert "Context" in result
+        assert "Wallet Score" in result
+        assert "Cluster Boost" in result
 
     def test_preview_leader_bonus(self):
-        """Test leader bonus increases score."""
+        """Test leader bonus increases wallet score."""
         result_no_leader = calculate_preview_score(
             win_rate=0.6,
             pnl=50,
-            timing=0.5,
             is_leader=False,
-            cluster_size=1,
-            liquidity=10000,
-            market_cap=100000,
-            age_minutes=30,
+            cluster_boost=1.0,
+            win_rate_weight=0.6,
+            pnl_weight=0.4,
+            leader_bonus=1.15,
+            trade_threshold=0.65,
         )
 
         result_leader = calculate_preview_score(
             win_rate=0.6,
             pnl=50,
-            timing=0.5,
             is_leader=True,
-            cluster_size=1,
-            liquidity=10000,
-            market_cap=100000,
-            age_minutes=30,
+            cluster_boost=1.0,
+            win_rate_weight=0.6,
+            pnl_weight=0.4,
+            leader_bonus=1.15,
+            trade_threshold=0.65,
         )
 
-        # Extract scores from markdown
         def extract_score(result: str) -> float:
             for line in result.split("\n"):
-                if "Final Score:" in line:
-                    return float(line.split(":")[1].strip().split("*")[0])
+                if "**Final Score:" in line and "Wallet" not in line:
+                    # Extract from format: **Final Score: 0.5290**
+                    import re
+                    match = re.search(r"Final Score:\s*([\d.]+)", line)
+                    if match:
+                        return float(match.group(1))
             return 0.0
 
         assert extract_score(result_leader) > extract_score(result_no_leader)
 
-    def test_preview_cluster_size_effect(self):
-        """Test cluster size affects score."""
-        result_small = calculate_preview_score(
+    def test_preview_cluster_boost_effect(self):
+        """Test cluster boost increases final score."""
+        result_no_boost = calculate_preview_score(
             win_rate=0.6,
             pnl=50,
-            timing=0.5,
             is_leader=False,
-            cluster_size=1,
-            liquidity=10000,
-            market_cap=100000,
-            age_minutes=30,
+            cluster_boost=1.0,
+            win_rate_weight=0.6,
+            pnl_weight=0.4,
+            leader_bonus=1.15,
+            trade_threshold=0.65,
         )
 
-        result_large = calculate_preview_score(
+        result_with_boost = calculate_preview_score(
             win_rate=0.6,
             pnl=50,
-            timing=0.5,
             is_leader=False,
-            cluster_size=10,
-            liquidity=10000,
-            market_cap=100000,
-            age_minutes=30,
+            cluster_boost=1.5,
+            win_rate_weight=0.6,
+            pnl_weight=0.4,
+            leader_bonus=1.15,
+            trade_threshold=0.65,
         )
 
         def extract_score(result: str) -> float:
+            import re
             for line in result.split("\n"):
-                if "Final Score:" in line:
-                    return float(line.split(":")[1].strip().split("*")[0])
+                if "**Final Score:" in line and "Wallet" not in line:
+                    match = re.search(r"Final Score:\s*([\d.]+)", line)
+                    if match:
+                        return float(match.group(1))
             return 0.0
 
-        assert extract_score(result_large) > extract_score(result_small)
+        assert extract_score(result_with_boost) > extract_score(result_no_boost)
 
-    def test_preview_high_conviction(self):
-        """Test high conviction eligibility."""
+    def test_preview_trade_eligible(self):
+        """Test trade eligible outcome."""
         result = calculate_preview_score(
-            win_rate=1.0,
-            pnl=400,
-            timing=1.0,
+            win_rate=0.8,
+            pnl=200,
             is_leader=True,
-            cluster_size=15,
-            liquidity=100000,
-            market_cap=1000000,
-            age_minutes=60,
+            cluster_boost=1.5,
+            win_rate_weight=0.6,
+            pnl_weight=0.4,
+            leader_bonus=1.15,
+            trade_threshold=0.65,
         )
 
-        assert "HIGH CONVICTION" in result
+        assert "TRADE ELIGIBLE" in result
 
     def test_preview_below_threshold(self):
-        """Test below threshold eligibility."""
+        """Test below threshold outcome."""
         result = calculate_preview_score(
             win_rate=0.3,
             pnl=-50,
-            timing=0.2,
             is_leader=False,
-            cluster_size=1,
-            liquidity=2000,
-            market_cap=20000,
-            age_minutes=2,  # Age penalty
+            cluster_boost=1.0,
+            win_rate_weight=0.6,
+            pnl_weight=0.4,
+            leader_bonus=1.15,
+            trade_threshold=0.65,
         )
 
         assert "BELOW THRESHOLD" in result
@@ -239,30 +204,33 @@ class TestPreviewScoreCalculation:
         result_low = calculate_preview_score(
             win_rate=0,
             pnl=-100,
-            timing=0,
             is_leader=False,
-            cluster_size=1,
-            liquidity=0,
-            market_cap=0,
-            age_minutes=0,
+            cluster_boost=1.0,
+            win_rate_weight=0.6,
+            pnl_weight=0.4,
+            leader_bonus=1.15,
+            trade_threshold=0.65,
         )
 
         # Extreme high values
         result_high = calculate_preview_score(
             win_rate=1.0,
             pnl=500,
-            timing=1.0,
             is_leader=True,
-            cluster_size=20,
-            liquidity=100000,
-            market_cap=1000000,
-            age_minutes=60,
+            cluster_boost=1.8,
+            win_rate_weight=0.6,
+            pnl_weight=0.4,
+            leader_bonus=1.15,
+            trade_threshold=0.65,
         )
 
         def extract_score(result: str) -> float:
+            import re
             for line in result.split("\n"):
-                if "Final Score:" in line:
-                    return float(line.split(":")[1].strip().split("*")[0])
+                if "**Final Score:" in line and "Wallet" not in line:
+                    match = re.search(r"Final Score:\s*([\d.]+)", line)
+                    if match:
+                        return float(match.group(1))
             return 0.0
 
         low_score = extract_score(result_low)
@@ -275,21 +243,24 @@ class TestPreviewScoreCalculation:
 class TestDefaultConstants:
     """Tests for default constant values."""
 
-    def test_weights_sum_to_one(self):
-        """Test default weights sum to 1.0."""
-        total = (
-            DEFAULT_WALLET_WEIGHT
-            + DEFAULT_CLUSTER_WEIGHT
-            + DEFAULT_TOKEN_WEIGHT
-            + DEFAULT_CONTEXT_WEIGHT
-        )
+    def test_wallet_weights_sum_to_one(self):
+        """Test default wallet weights sum to 1.0."""
+        total = DEFAULT_WALLET_WIN_RATE_WEIGHT + DEFAULT_WALLET_PNL_WEIGHT
         assert abs(total - 1.0) < 0.001
 
-    def test_thresholds_ordered(self):
-        """Test high conviction > trade threshold."""
-        assert DEFAULT_HIGH_CONVICTION_THRESHOLD > DEFAULT_TRADE_THRESHOLD
-
-    def test_thresholds_valid_range(self):
-        """Test thresholds are between 0 and 1."""
+    def test_trade_threshold_valid_range(self):
+        """Test trade threshold is between 0 and 1."""
         assert 0 < DEFAULT_TRADE_THRESHOLD < 1
-        assert 0 < DEFAULT_HIGH_CONVICTION_THRESHOLD < 1
+
+    def test_leader_bonus_valid_range(self):
+        """Test leader bonus is >= 1.0."""
+        assert DEFAULT_LEADER_BONUS >= 1.0
+
+    def test_cluster_boost_range_valid(self):
+        """Test cluster boost range is valid."""
+        assert DEFAULT_MIN_CLUSTER_BOOST >= 1.0
+        assert DEFAULT_MAX_CLUSTER_BOOST >= DEFAULT_MIN_CLUSTER_BOOST
+
+    def test_pnl_normalize_range_valid(self):
+        """Test PnL normalization range is valid."""
+        assert DEFAULT_PNL_NORMALIZE_MIN < DEFAULT_PNL_NORMALIZE_MAX

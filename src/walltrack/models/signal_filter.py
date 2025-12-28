@@ -16,13 +16,17 @@ class FilterStatus(str, Enum):
 
 
 class WalletCacheEntry(BaseModel):
-    """Entry in the monitored wallets cache."""
+    """Entry in the monitored wallets cache.
+
+    Epic 14 Story 14-5: Removed cluster_id and is_leader fields.
+    Cluster data is now fetched directly from Neo4j via ClusterService.
+    """
 
     wallet_address: str
     is_monitored: bool = False
     is_blacklisted: bool = False
-    cluster_id: str | None = None
-    is_leader: bool = False
+    # REMOVED: cluster_id: str | None = None (use ClusterService instead)
+    # REMOVED: is_leader: bool = False (use ClusterService instead)
     reputation_score: float = Field(default=0.5, ge=0, le=1)
     cached_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     ttl_seconds: int = Field(default=300)  # 5 minutes
@@ -67,7 +71,14 @@ class SignalContext(BaseModel):
 
 
 class ProcessingResult(BaseModel):
-    """Result of full pipeline processing."""
+    """Result of full pipeline processing.
+
+    Epic 14 Simplification:
+    - wallet_score: Primary score from wallet reputation
+    - cluster_boost: Multiplier from cluster participation (1.0-1.8x)
+    - position_multiplier: Used for sizing (equals cluster_boost)
+    - Removed: token_score, context_score, conviction_tier (deprecated)
+    """
 
     # Processing outcome
     passed: bool
@@ -78,16 +89,19 @@ class ProcessingResult(BaseModel):
     wallet_address: str | None = None
     token_address: str | None = None
 
-    # Scoring results (None if not scored)
-    score: float | None = None
-    wallet_score: float | None = None
-    token_score: float | None = None
-    cluster_score: float | None = None
-    context_score: float | None = None
+    # Scoring results (simplified in Epic 14)
+    score: float | None = None  # Final score (wallet_score * cluster_boost)
+    wallet_score: float | None = None  # Wallet reputation score
+    cluster_boost: float | None = None  # Cluster multiplier (1.0-1.8x)
 
-    # Threshold result (None if below threshold or not checked)
-    conviction_tier: str | None = None  # "high", "standard", "none"
-    position_multiplier: float | None = None
+    # Deprecated fields (kept for backward compatibility)
+    token_score: float | None = None  # DEPRECATED: Now binary gate in scorer
+    context_score: float | None = None  # DEPRECATED: Removed in Epic 14
+    cluster_score: float | None = None  # DEPRECATED: Use cluster_boost instead
+    conviction_tier: str | None = None  # DEPRECATED: Use position_multiplier
+
+    # Threshold result
+    position_multiplier: float | None = None  # Size multiplier (equals cluster_boost)
 
     # Execution status
     trade_queued: bool = False

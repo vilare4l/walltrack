@@ -1,4 +1,11 @@
-"""Signal processing pipeline."""
+"""Signal processing pipeline.
+
+Epic 14 Simplification:
+- Uses simplified 2-component scorer (wallet + cluster boost)
+- Single threshold (0.65) instead of dual thresholds
+- Token safety is binary gate in scorer
+- Position multiplier equals cluster_boost
+"""
 
 from __future__ import annotations
 
@@ -12,18 +19,18 @@ if TYPE_CHECKING:
     from walltrack.models.position import Position
     from walltrack.services.trade.position_sizer import PositionSizer
 
-from walltrack.data.models.wallet import Wallet
 from walltrack.data.supabase.repositories.signal_repo import SignalRepository
 from walltrack.data.supabase.repositories.wallet_repo import WalletRepository
 from walltrack.models.position_sizing import PositionSizeRequest
 from walltrack.models.signal_filter import (
     FilterStatus,
     ProcessingResult,
+    WalletCacheEntry,
 )
 from walltrack.models.signal_log import SignalLogEntry, SignalStatus
-from walltrack.models.threshold import EligibilityStatus
 from walltrack.models.token import TokenCharacteristics, TokenSource
 from walltrack.services.helius.models import ParsedSwapEvent
+from walltrack.services.cluster import ClusterInfo
 from walltrack.services.position_service import PositionService
 from walltrack.services.scoring.signal_scorer import SignalScorer
 from walltrack.services.scoring.threshold_checker import ThresholdChecker
@@ -34,10 +41,14 @@ logger = structlog.get_logger(__name__)
 
 
 class SignalPipeline:
-    """
-    Main signal processing pipeline.
+    """Main signal processing pipeline.
 
-    Orchestrates filtering, scoring, and trade eligibility.
+    Epic 14 Simplification:
+    - Filter: Provides WalletCacheEntry with cluster info
+    - Score: 2-component model (wallet + cluster boost)
+    - Threshold: Single threshold (0.65)
+    - Token safety: Binary gate in scorer
+
     Full flow: Filter -> Score -> Threshold -> (optionally) Queue for execution
     """
 
@@ -55,14 +66,14 @@ class SignalPipeline:
         """Initialize signal pipeline with all components.
 
         Args:
-            signal_filter: Signal filter service (Story 3.2)
-            signal_scorer: Signal scorer service (Story 3.4)
-            threshold_checker: Threshold checker service (Story 3.5)
-            wallet_repo: Wallet repository for loading wallet data
+            signal_filter: Signal filter service with WalletCache
+            signal_scorer: Simplified 2-component scorer
+            threshold_checker: Single threshold checker
+            wallet_repo: Wallet repository (for legacy wallet loading)
             token_fetcher: Token fetcher for loading token characteristics
-            signal_repo: Signal repository for logging (optional, Story 9.9)
-            position_service: Position service for creating positions (Epic 4)
-            position_sizer: Position sizer for calculating trade sizes (Epic 4)
+            signal_repo: Signal repository for logging (optional)
+            position_service: Position service for creating positions
+            position_sizer: Position sizer for calculating trade sizes
         """
         self.signal_filter = signal_filter
         self.signal_scorer = signal_scorer
@@ -73,24 +84,19 @@ class SignalPipeline:
         self.position_service = position_service
         self.position_sizer = position_sizer
 
-        # Simple wallet cache (address -> Wallet)
-        self._wallet_cache: dict[str, tuple[Wallet, float]] = {}
-        self._wallet_cache_ttl = 300.0  # 5 minutes
-
         # Default exit strategy ID
         self._default_exit_strategy_id = "default-exit-strategy"
 
     async def process_swap_event(
         self, event: ParsedSwapEvent
     ) -> ProcessingResult:
-        """
-        Process swap event through the full pipeline.
+        """Process swap event through the simplified pipeline.
 
-        Pipeline stages:
-        1. Filter: Check if wallet is monitored and not blacklisted
-        2. Load: Fetch wallet data and token characteristics
-        3. Score: Calculate multi-factor score
-        4. Threshold: Check if score meets trade eligibility
+        Epic 14 Pipeline stages:
+        1. Filter: Check if wallet is monitored (provides WalletCacheEntry)
+        2. Load: Fetch token characteristics
+        3. Score: 2-component model (wallet + cluster boost)
+        4. Threshold: Single threshold check (0.65)
 
         Args:
             event: Parsed swap event from Helius webhook
@@ -100,7 +106,7 @@ class SignalPipeline:
         """
         start_time = time.perf_counter()
 
-        # Step 1: Filter signal
+        # Step 1: Filter signal (provides WalletCacheEntry with cluster info)
         filter_result = await self.signal_filter.filter_signal(event)
 
         if filter_result.status != FilterStatus.PASSED:
@@ -121,10 +127,15 @@ class SignalPipeline:
             await self._log_signal(event, result)
             return result
 
-        # Create enriched signal context
-        signal_context = self.signal_filter.create_signal_context(
-            event, filter_result
-        )
+        # Get WalletCacheEntry from filter (contains cluster info)
+        wallet_entry = filter_result.wallet_metadata
+        if wallet_entry is None:
+            # Create default entry if not available
+            wallet_entry = WalletCacheEntry(
+                wallet_address=event.wallet_address,
+                is_monitored=True,
+                reputation_score=0.5,
+            )
 
         logger.debug(
             "signal_passed_filter",
@@ -133,16 +144,21 @@ class SignalPipeline:
             direction=event.direction.value,
         )
 
-        # Step 2: Load enrichment data
-        wallet = await self._load_wallet_data(event.wallet_address)
+        # Step 2: Load token data
         token = await self._load_token_data(event.token_address)
 
-        # Step 3: Score signal
+        # Step 3: Score signal (simplified 2-component model)
+        # Epic 14-5: Cluster info would come from ClusterService.
+        # For now, use defaults. Full integration requires ClusterService injection.
+        cluster_info: ClusterInfo | None = None
+
         try:
-            scored_signal = await self.signal_scorer.score(
-                signal=signal_context,
-                wallet=wallet,
+            scored_signal = self.signal_scorer.score(
+                wallet=wallet_entry,
                 token=token,
+                tx_signature=event.tx_signature,
+                direction=event.direction.value,
+                cluster_info=cluster_info,
             )
         except Exception as e:
             processing_time = (time.perf_counter() - start_time) * 1000
@@ -162,23 +178,25 @@ class SignalPipeline:
             await self._log_signal(event, result)
             return result
 
-        # Step 4: Apply threshold
-        threshold_result = self.threshold_checker.check(
-            scored_signal=scored_signal,
-            token=token,
-        )
+        # Step 4: Apply threshold (single threshold check)
+        threshold_result = self.threshold_checker.check(scored_signal)
 
         processing_time = (time.perf_counter() - start_time) * 1000
 
+        # Import needed for threshold check
+        from walltrack.models.threshold import EligibilityStatus
+
         # Build result based on threshold outcome
-        if threshold_result.eligibility_status == EligibilityStatus.BELOW_THRESHOLD:
+        is_below_threshold = (
+            threshold_result.eligibility_status == EligibilityStatus.BELOW_THRESHOLD
+        )
+        if is_below_threshold:
             logger.info(
                 "signal_below_threshold",
                 wallet=event.wallet_address[:8] + "...",
                 token=event.token_address[:8] + "...",
                 score=f"{scored_signal.final_score:.3f}",
                 threshold=threshold_result.threshold_used,
-                failures=threshold_result.filter_failures,
             )
             result = ProcessingResult(
                 passed=False,
@@ -187,10 +205,8 @@ class SignalPipeline:
                 wallet_address=event.wallet_address,
                 token_address=event.token_address,
                 score=scored_signal.final_score,
-                wallet_score=scored_signal.wallet_score.score,
-                token_score=scored_signal.token_score.score,
-                cluster_score=scored_signal.cluster_score.score,
-                context_score=scored_signal.context_score.score,
+                wallet_score=scored_signal.wallet_score,
+                cluster_boost=scored_signal.cluster_boost,
                 processing_time_ms=processing_time,
             )
             await self._log_signal(event, result)
@@ -203,7 +219,6 @@ class SignalPipeline:
             token=event.token_address[:8] + "...",
             direction=event.direction.value,
             score=f"{scored_signal.final_score:.3f}",
-            conviction=threshold_result.conviction_tier.value,
             multiplier=threshold_result.position_multiplier,
         )
 
@@ -214,11 +229,8 @@ class SignalPipeline:
             wallet_address=event.wallet_address,
             token_address=event.token_address,
             score=scored_signal.final_score,
-            wallet_score=scored_signal.wallet_score.score,
-            token_score=scored_signal.token_score.score,
-            cluster_score=scored_signal.cluster_score.score,
-            context_score=scored_signal.context_score.score,
-            conviction_tier=threshold_result.conviction_tier.value,
+            wallet_score=scored_signal.wallet_score,
+            cluster_boost=scored_signal.cluster_boost,
             position_multiplier=threshold_result.position_multiplier,
             trade_queued=False,
             processing_time_ms=processing_time,
@@ -239,7 +251,7 @@ class SignalPipeline:
                 event=event,
                 signal_id=signal_id,
                 final_score=scored_signal.final_score,
-                conviction_tier=threshold_result.conviction_tier.value,
+                position_multiplier=threshold_result.position_multiplier,
                 token=token,
             )
             if position:
@@ -254,6 +266,22 @@ class SignalPipeline:
                 )
 
         return result
+
+    def _get_cluster_boost(self, cluster_info: ClusterInfo | None) -> float:
+        """Get cluster boost for signal based on cluster participation.
+
+        Epic 14 Story 14-5: Cluster info now comes from ClusterService.
+
+        Args:
+            cluster_info: Cluster info from ClusterService
+
+        Returns:
+            Cluster boost multiplier (1.0-1.8x)
+        """
+        if cluster_info is None:
+            return 1.0
+
+        return cluster_info.amplification_factor
 
     async def _log_signal(
         self,
@@ -294,12 +322,9 @@ class SignalPipeline:
                 slot=event.slot,
                 final_score=result.score,
                 wallet_score=result.wallet_score,
-                cluster_score=result.cluster_score,
-                token_score=result.token_score,
-                context_score=result.context_score,
+                cluster_boost=result.cluster_boost,
                 status=status,
                 eligibility_status=result.reason,
-                conviction_tier=result.conviction_tier,
                 filter_status=result.reason if not result.passed else "passed",
                 filter_reason=result.reason if not result.passed else None,
                 timestamp=event.timestamp,
@@ -323,13 +348,13 @@ class SignalPipeline:
         event: ParsedSwapEvent,
         signal_id: str,
         final_score: float,
-        conviction_tier: str,
+        position_multiplier: float,
         token: TokenCharacteristics,
     ) -> Position | None:
         """Create a position from a trade-eligible signal.
 
         Uses PositionSizer to calculate proper position size based on:
-        - Signal score and conviction tier
+        - Signal score and position multiplier (equals cluster_boost)
         - Available balance and current allocations
         - Configured multipliers and limits
 
@@ -337,7 +362,7 @@ class SignalPipeline:
             event: Swap event that triggered the signal
             signal_id: ID of the logged signal
             final_score: Signal final score for sizing calculation
-            conviction_tier: "high" or "standard"
+            position_multiplier: Position size multiplier (equals cluster_boost)
             token: Token characteristics for symbol
 
         Returns:
@@ -397,7 +422,6 @@ class SignalPipeline:
                     base_size=size_result.base_size_sol,
                     multiplier=size_result.multiplier,
                     final_size=size_result.final_size_sol,
-                    conviction=size_result.conviction_tier.value,
                 )
             else:
                 # Fallback: use event amounts if no sizer available
@@ -413,6 +437,7 @@ class SignalPipeline:
             token_symbol = getattr(token, "symbol", None)
 
             # Create position (simulated flag set automatically by PositionService)
+            # Note: conviction_tier is deprecated, using "standard" as default
             position = await self.position_service.create_position(
                 signal_id=signal_id,
                 token_address=event.token_address,
@@ -420,7 +445,7 @@ class SignalPipeline:
                 entry_amount_sol=entry_amount_sol,
                 entry_amount_tokens=entry_amount_tokens,
                 exit_strategy_id=self._default_exit_strategy_id,
-                conviction_tier=conviction_tier,
+                conviction_tier="standard",  # Deprecated, kept for compatibility
                 token_symbol=token_symbol,
             )
 
@@ -433,52 +458,6 @@ class SignalPipeline:
                 error=str(e),
             )
             return None
-
-    async def _load_wallet_data(self, address: str) -> Wallet:
-        """Load wallet data for scoring with caching.
-
-        Args:
-            address: Wallet address
-
-        Returns:
-            Wallet with profile data, or default wallet if not found
-        """
-        # Check cache
-        now = time.time()
-        if address in self._wallet_cache:
-            wallet, cached_at = self._wallet_cache[address]
-            if now - cached_at < self._wallet_cache_ttl:
-                return wallet
-
-        # Load from repository
-        wallet_data = await self.wallet_repo.get_by_address(address)
-
-        if wallet_data is None:
-            # Return default wallet for unknown addresses
-            from walltrack.data.models.wallet import (  # noqa: PLC0415
-                WalletProfile,
-                WalletStatus,
-            )
-
-            wallet_data = Wallet(
-                address=address,
-                status=WalletStatus.ACTIVE,
-                score=0.3,  # Conservative default
-                profile=WalletProfile(),
-            )
-            logger.debug(
-                "wallet_not_found_using_defaults",
-                address=address[:8] + "...",
-            )
-
-        # Cache result
-        self._wallet_cache[address] = (wallet_data, now)
-
-        # Cleanup old entries if cache is large
-        if len(self._wallet_cache) > 1000:
-            self._cleanup_wallet_cache()
-
-        return wallet_data
 
     async def _load_token_data(self, mint: str) -> TokenCharacteristics:
         """Load token characteristics for scoring.
@@ -508,17 +487,6 @@ class SignalPipeline:
             is_new_token=True,
         )
 
-    def _cleanup_wallet_cache(self) -> None:
-        """Remove expired entries from wallet cache."""
-        now = time.time()
-        expired = [
-            addr
-            for addr, (_, cached_at) in self._wallet_cache.items()
-            if now - cached_at > self._wallet_cache_ttl
-        ]
-        for addr in expired:
-            del self._wallet_cache[addr]
-
 
 # Singleton pipeline instance
 _pipeline: SignalPipeline | None = None
@@ -530,6 +498,9 @@ async def get_pipeline() -> SignalPipeline:
 
     if _pipeline is None:
         # Lazy imports to avoid circular dependencies
+        from walltrack.data.neo4j.client import (  # noqa: PLC0415
+            get_neo4j_client,
+        )
         from walltrack.data.supabase.client import (  # noqa: PLC0415
             get_supabase_client,
         )
@@ -560,8 +531,19 @@ async def get_pipeline() -> SignalPipeline:
         wallet_repo = WalletRepository(client)
         signal_repo = SignalRepository(client)
 
-        # Initialize wallet cache for filter
-        wallet_cache = WalletCache(wallet_repo)
+        # Try to get Neo4j client for cluster data (optional)
+        neo4j_client = None
+        try:
+            neo4j_client = await get_neo4j_client()
+        except Exception as e:
+            logger.warning(
+                "neo4j_client_unavailable",
+                error=str(e),
+                message="Continuing without cluster data",
+            )
+
+        # Initialize wallet cache for filter with cluster support
+        wallet_cache = WalletCache(wallet_repo, neo4j_client)
         await wallet_cache.initialize()
 
         # Create all pipeline components

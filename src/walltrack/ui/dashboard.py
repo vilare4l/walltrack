@@ -15,7 +15,6 @@ from walltrack.ui.components.status import create_status_tab
 from walltrack.ui.components.status_bar import get_status_bar_html
 from walltrack.ui.components.wallets import create_wallets_tab
 from walltrack.ui.pages.config import create_config_page
-from walltrack.ui.pages.exit_simulator import create_exit_simulator_page
 from walltrack.ui.pages.exit_strategies import create_exit_strategies_page
 from walltrack.ui.pages.explorer import create_explorer_page
 from walltrack.ui.pages.home import create_home_page
@@ -245,29 +244,6 @@ def create_dashboard() -> gr.Blocks:  # noqa: PLR0915
         )
 
         create_exit_strategies_page()
-
-    # ========== EXIT SIMULATOR PAGE ==========
-    with demo.route("Exit Simulator"):
-        gr.Navbar(
-            value=[],
-            main_page_name="Home",
-            visible=True,
-        )
-
-        gr.Markdown("# WallTrack Dashboard", elem_id="dashboard-title")
-        gr.Markdown("Autonomous Solana Memecoin Trading System", elem_id="dashboard-subtitle")
-
-        # Status Bar
-        exit_simulator_status_bar = gr.HTML(
-            value="<div>Loading status...</div>",
-            every=30,
-            elem_id="exit-simulator-status-bar",
-        )
-        exit_simulator_status_bar.change(
-            fn=get_status_bar_html, outputs=[exit_simulator_status_bar]
-        )
-
-        create_exit_simulator_page()
 
     log.info("dashboard_created", debug=settings.debug, multipage=True)
 

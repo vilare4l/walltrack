@@ -33,33 +33,35 @@ class TestWalletCacheEntry:
     """Tests for WalletCacheEntry model."""
 
     def test_default_values(self):
-        """Test WalletCacheEntry default values."""
+        """Test WalletCacheEntry default values.
+
+        Epic 14 Story 14-5: cluster_id and is_leader removed.
+        Use ClusterService for cluster info.
+        """
         entry = WalletCacheEntry(wallet_address="wallet123")
 
         assert entry.wallet_address == "wallet123"
         assert entry.is_monitored is False
         assert entry.is_blacklisted is False
-        assert entry.cluster_id is None
-        assert entry.is_leader is False
         assert entry.reputation_score == 0.5
         assert entry.ttl_seconds == 300
 
     def test_custom_values(self):
-        """Test WalletCacheEntry with custom values."""
+        """Test WalletCacheEntry with custom values.
+
+        Epic 14 Story 14-5: cluster_id and is_leader removed.
+        Use ClusterService for cluster info.
+        """
         entry = WalletCacheEntry(
             wallet_address="wallet456",
             is_monitored=True,
             is_blacklisted=False,
-            cluster_id="cluster-abc",
-            is_leader=True,
             reputation_score=0.9,
             ttl_seconds=600,
         )
 
         assert entry.wallet_address == "wallet456"
         assert entry.is_monitored is True
-        assert entry.cluster_id == "cluster-abc"
-        assert entry.is_leader is True
         assert entry.reputation_score == 0.9
         assert entry.ttl_seconds == 600
 
@@ -158,11 +160,15 @@ class TestFilterResult:
         assert result.is_blacklisted is True
 
     def test_with_wallet_metadata(self):
-        """Test FilterResult with wallet metadata."""
+        """Test FilterResult with wallet metadata.
+
+        Epic 14 Story 14-5: cluster_id removed from WalletCacheEntry.
+        Use ClusterService for cluster info.
+        """
         entry = WalletCacheEntry(
             wallet_address="wallet123",
             is_monitored=True,
-            cluster_id="cluster-1",
+            reputation_score=0.85,
         )
 
         result = FilterResult(
@@ -175,7 +181,8 @@ class TestFilterResult:
         )
 
         assert result.wallet_metadata is not None
-        assert result.wallet_metadata.cluster_id == "cluster-1"
+        assert result.wallet_metadata.is_monitored is True
+        assert result.wallet_metadata.reputation_score == 0.85
 
     def test_lookup_time_validation(self):
         """Test lookup_time_ms rejects negative values."""

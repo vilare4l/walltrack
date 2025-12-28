@@ -153,3 +153,12 @@ development_status:
   10-6-config-page-migration: review
   10-7-drill-down-integration: review
   epic-10-retrospective: optional
+
+  # Epic 14: System Simplification & Automation
+  epic-14: in-progress
+  14-1-exit-simulation-removal: done
+  14-2-walletcache-cluster-integration: done  # superseded by 14-5
+  14-3-scoring-simplification: done
+  14-4-automatic-network-onboarding: done
+  14-5-cluster-architecture-refinement: ready-for-dev
+  epic-14-retrospective: optional

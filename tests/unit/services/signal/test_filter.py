@@ -48,14 +48,16 @@ class TestSignalFilterMonitoredWallet:
         sample_swap_event: ParsedSwapEvent,
         mock_wallet_cache: MagicMock,
     ):
-        """Test that monitored wallets pass filter."""
+        """Test that monitored wallets pass filter.
+
+        Epic 14 Story 14-5: cluster_id and is_leader removed from WalletCacheEntry.
+        Use ClusterService for cluster info.
+        """
         mock_wallet_cache.get.return_value = (
             WalletCacheEntry(
                 wallet_address=sample_swap_event.wallet_address,
                 is_monitored=True,
                 is_blacklisted=False,
-                cluster_id="cluster-123",
-                is_leader=True,
                 reputation_score=0.85,
             ),
             True,  # cache hit
@@ -69,8 +71,7 @@ class TestSignalFilterMonitoredWallet:
         assert result.is_blacklisted is False
         assert result.cache_hit is True
         assert result.wallet_metadata is not None
-        assert result.wallet_metadata.cluster_id == "cluster-123"
-        assert result.wallet_metadata.is_leader is True
+        assert result.wallet_metadata.reputation_score == 0.85
 
     @pytest.mark.asyncio
     async def test_monitored_wallet_cache_miss(
@@ -286,13 +287,15 @@ class TestSignalFilterCreateContext:
         assert context.tx_signature == sample_swap_event.tx_signature
 
     def test_create_context_with_metadata(self, sample_swap_event: ParsedSwapEvent, mock_wallet_cache: MagicMock):
-        """Test creating context with wallet metadata."""
+        """Test creating context with wallet metadata.
+
+        Epic 14 Story 14-5: cluster_id and is_leader removed from WalletCacheEntry.
+        Cluster info now comes from ClusterService at scoring time.
+        """
         entry = WalletCacheEntry(
             wallet_address=sample_swap_event.wallet_address,
             is_monitored=True,
             is_blacklisted=False,
-            cluster_id="cluster-abc",
-            is_leader=True,
             reputation_score=0.9,
         )
 
@@ -309,8 +312,9 @@ class TestSignalFilterCreateContext:
         filter_service = SignalFilter(mock_wallet_cache)
         context = filter_service.create_signal_context(sample_swap_event, filter_result)
 
-        assert context.cluster_id == "cluster-abc"
-        assert context.is_cluster_leader is True
+        # Cluster info defaults (populated by ClusterService at scoring time)
+        assert context.cluster_id is None
+        assert context.is_cluster_leader is False
         assert context.wallet_reputation == 0.9
         assert context.filter_status == FilterStatus.PASSED
         assert context.filter_time_ms == 3.5

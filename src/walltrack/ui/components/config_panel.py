@@ -1,4 +1,11 @@
-"""Scoring configuration panel component for dashboard."""
+"""Simplified scoring configuration panel component.
+
+Epic 14 Simplification:
+- Single threshold (0.65) instead of dual thresholds
+- ~8 parameters instead of 30+
+- Removed pie chart for 4-factor weights
+- Simple bar chart for wallet score composition
+"""
 
 from typing import Any
 
@@ -8,14 +15,14 @@ import plotly.graph_objects as go
 
 from walltrack.config.settings import get_settings
 from walltrack.constants.scoring import (
-    DEFAULT_CLUSTER_WEIGHT,
-    DEFAULT_CONTEXT_WEIGHT,
-    DEFAULT_TOKEN_WEIGHT,
-    DEFAULT_WALLET_WEIGHT,
-)
-from walltrack.constants.threshold import (
-    DEFAULT_HIGH_CONVICTION_THRESHOLD,
+    DEFAULT_LEADER_BONUS,
+    DEFAULT_MAX_CLUSTER_BOOST,
+    DEFAULT_MIN_CLUSTER_BOOST,
+    DEFAULT_PNL_NORMALIZE_MAX,
+    DEFAULT_PNL_NORMALIZE_MIN,
     DEFAULT_TRADE_THRESHOLD,
+    DEFAULT_WALLET_PNL_WEIGHT,
+    DEFAULT_WALLET_WIN_RATE_WEIGHT,
 )
 
 
@@ -24,110 +31,56 @@ def _get_api_base_url() -> str:
     settings = get_settings()
     return settings.api_base_url or f"http://localhost:{settings.port}"
 
-def create_weights_chart(
-    wallet: float,
-    cluster: float,
-    token: float,
-    context: float,
-) -> go.Figure:
-    """Create pie chart showing weight distribution.
+
+def create_scoring_chart(win_rate_weight: float, pnl_weight: float) -> go.Figure:
+    """Create bar chart showing wallet score composition.
 
     Args:
-        wallet: Wallet weight
-        cluster: Cluster weight
-        token: Token weight
-        context: Context weight
+        win_rate_weight: Weight for win rate (0-1)
+        pnl_weight: Weight for PnL (0-1)
 
     Returns:
-        Plotly figure with pie chart
+        Plotly figure with horizontal bar chart
     """
-    labels = [
-        f"Wallet ({wallet*100:.0f}%)",
-        f"Cluster ({cluster*100:.0f}%)",
-        f"Token ({token*100:.0f}%)",
-        f"Context ({context*100:.0f}%)",
-    ]
-    values = [wallet, cluster, token, context]
-    colors = ["#4CAF50", "#2196F3", "#FF9800", "#9C27B0"]
-
     fig = go.Figure(
         data=[
-            go.Pie(
-                labels=labels,
-                values=values,
-                marker={"colors": colors},
-                textinfo="label+percent",
-                hole=0.4,
+            go.Bar(
+                x=[win_rate_weight, pnl_weight],
+                y=["Win Rate", "PnL"],
+                orientation="h",
+                marker_color=["#4CAF50", "#2196F3"],
+                text=[f"{win_rate_weight*100:.0f}%", f"{pnl_weight*100:.0f}%"],
+                textposition="inside",
             )
         ]
     )
 
     fig.update_layout(
-        title="Score Weight Distribution",
-        showlegend=True,
-        height=350,
-        margin={"t": 50, "b": 50, "l": 50, "r": 50},
+        title="Wallet Score Composition",
+        xaxis_title="Weight",
+        yaxis_title="Factor",
+        height=200,
+        margin={"t": 40, "b": 30, "l": 80, "r": 20},
+        xaxis={"range": [0, 1]},
     )
 
     return fig
 
 
-def calculate_sum(w: float, c: float, t: float, x: float) -> str:
-    """Calculate and display current sum.
+def validate_wallet_weights(win_rate: float, pnl: float) -> str:
+    """Validate wallet weights sum to 1.0.
 
     Args:
-        w: Wallet weight
-        c: Cluster weight
-        t: Token weight
-        x: Context weight
+        win_rate: Win rate weight
+        pnl: PnL weight
 
     Returns:
-        Formatted sum string
+        Validation message
     """
-    total = w + c + t + x
+    total = win_rate + pnl
     if abs(total - 1.0) < 0.001:
-        return f"Total: {total:.3f} (valid)"
-    else:
-        return f"Total: {total:.3f} (must be 1.0)"
-
-
-def normalize_weights(
-    wallet: float,
-    cluster: float,
-    token: float,
-    context: float,
-) -> tuple[float, float, float, float, str, go.Figure]:
-    """Normalize weights to sum to 1.0.
-
-    Args:
-        wallet: Current wallet weight
-        cluster: Current cluster weight
-        token: Current token weight
-        context: Current context weight
-
-    Returns:
-        Tuple of normalized weights, status message, and chart
-    """
-    total = wallet + cluster + token + context
-    if total == 0:
-        w, c, t, x = 0.25, 0.25, 0.25, 0.25
-        return w, c, t, x, "Normalized to equal weights", create_weights_chart(
-            w, c, t, x
-        )
-
-    factor = 1.0 / total
-    w = round(wallet * factor, 3)
-    c = round(cluster * factor, 3)
-    t = round(token * factor, 3)
-    x = round(context * factor, 3)
-
-    # Adjust for rounding
-    diff = 1.0 - (w + c + t + x)
-    w = round(w + diff, 3)
-
-    return w, c, t, x, f"Normalized from {total:.3f} to 1.000", create_weights_chart(
-        w, c, t, x
-    )
+        return f"Total: {total:.2f} (valid)"
+    return f"Total: {total:.2f} (should be 1.0)"
 
 
 async def fetch_current_config() -> dict[str, Any]:
@@ -147,60 +100,53 @@ async def fetch_current_config() -> dict[str, Any]:
                 return result
     except Exception:
         pass
-    return {
-        "weights": {
-            "wallet": DEFAULT_WALLET_WEIGHT,
-            "cluster": DEFAULT_CLUSTER_WEIGHT,
-            "token": DEFAULT_TOKEN_WEIGHT,
-            "context": DEFAULT_CONTEXT_WEIGHT,
-        }
-    }
 
-
-async def fetch_threshold_config() -> dict[str, Any]:
-    """Fetch current threshold config from API.
-
-    Returns:
-        Current threshold configuration dict
-    """
-    try:
-        async with httpx.AsyncClient(
-            base_url=_get_api_base_url(),
-            timeout=5.0,
-        ) as client:
-            response = await client.get("/api/v1/threshold/config")
-            if response.status_code == 200:
-                result: dict[str, Any] = response.json()
-                return result
-    except Exception:
-        pass
+    # Return defaults
     return {
         "trade_threshold": DEFAULT_TRADE_THRESHOLD,
-        "high_conviction_threshold": DEFAULT_HIGH_CONVICTION_THRESHOLD,
+        "wallet_win_rate_weight": DEFAULT_WALLET_WIN_RATE_WEIGHT,
+        "wallet_pnl_weight": DEFAULT_WALLET_PNL_WEIGHT,
+        "leader_bonus": DEFAULT_LEADER_BONUS,
+        "pnl_normalize_min": DEFAULT_PNL_NORMALIZE_MIN,
+        "pnl_normalize_max": DEFAULT_PNL_NORMALIZE_MAX,
+        "min_cluster_boost": DEFAULT_MIN_CLUSTER_BOOST,
+        "max_cluster_boost": DEFAULT_MAX_CLUSTER_BOOST,
     }
 
 
-async def update_weights(
-    wallet: float,
-    cluster: float,
-    token: float,
-    context: float,
+async def update_config(
+    trade_threshold: float,
+    win_rate_weight: float,
+    pnl_weight: float,
+    leader_bonus: float,
+    pnl_min: float,
+    pnl_max: float,
+    min_boost: float,
+    max_boost: float,
 ) -> tuple[str, go.Figure | None]:
-    """Update scoring weights via API.
+    """Update scoring configuration via API.
 
     Args:
-        wallet: New wallet weight
-        cluster: New cluster weight
-        token: New token weight
-        context: New context weight
+        trade_threshold: Single trade threshold
+        win_rate_weight: Weight for win rate in wallet score
+        pnl_weight: Weight for PnL in wallet score
+        leader_bonus: Multiplier for cluster leaders
+        pnl_min: Min PnL for normalization
+        pnl_max: Max PnL for normalization
+        min_boost: Minimum cluster boost
+        max_boost: Maximum cluster boost
 
     Returns:
         Tuple of status message and updated chart
     """
-    # Validate sum
-    total = wallet + cluster + token + context
-    if abs(total - 1.0) > 0.001:
-        return f"Error: Weights must sum to 1.0 (current sum: {total:.3f})", None
+    # Validate wallet weights
+    total = win_rate_weight + pnl_weight
+    if abs(total - 1.0) > 0.01:
+        return f"Error: Win Rate + PnL weights must equal 1.0 (current: {total:.2f})", None
+
+    # Validate cluster boost range
+    if min_boost > max_boost:
+        return "Error: Min cluster boost must be <= max cluster boost", None
 
     try:
         async with httpx.AsyncClient(
@@ -208,69 +154,34 @@ async def update_weights(
             timeout=5.0,
         ) as client:
             response = await client.put(
-                "/api/v1/scoring/config/weights",
+                "/api/v1/scoring/config",
                 json={
-                    "wallet": wallet,
-                    "cluster": cluster,
-                    "token": token,
-                    "context": context,
+                    "trade_threshold": trade_threshold,
+                    "wallet_win_rate_weight": win_rate_weight,
+                    "wallet_pnl_weight": pnl_weight,
+                    "leader_bonus": leader_bonus,
+                    "pnl_normalize_min": pnl_min,
+                    "pnl_normalize_max": pnl_max,
+                    "min_cluster_boost": min_boost,
+                    "max_cluster_boost": max_boost,
                 },
             )
 
             if response.status_code == 200:
-                fig = create_weights_chart(wallet, cluster, token, context)
-                return "Weights updated successfully! Changes take effect immediately.", fig
+                fig = create_scoring_chart(win_rate_weight, pnl_weight)
+                return "Configuration updated! Changes take effect immediately.", fig
             else:
                 detail = response.json().get("detail", "Unknown error")
                 return f"Error: {detail}", None
 
     except Exception as e:
-        return f"Error updating weights: {e}", None
-
-
-async def update_threshold(
-    trade_threshold: float,
-    high_conviction: float,
-) -> str:
-    """Update threshold config via API.
-
-    Args:
-        trade_threshold: New trade threshold
-        high_conviction: New high conviction threshold
-
-    Returns:
-        Status message
-    """
-    if high_conviction <= trade_threshold:
-        return "Error: High conviction threshold must be > trade threshold"
-
-    try:
-        async with httpx.AsyncClient(
-            base_url=_get_api_base_url(),
-            timeout=5.0,
-        ) as client:
-            response = await client.put(
-                "/api/v1/threshold/config",
-                json={
-                    "trade_threshold": trade_threshold,
-                    "high_conviction_threshold": high_conviction,
-                },
-            )
-
-            if response.status_code == 200:
-                return "Threshold updated successfully! Changes take effect immediately."
-            else:
-                detail = response.json().get("detail", "Unknown error")
-                return f"Error: {detail}"
-
-    except Exception as e:
-        return f"Error updating threshold: {e}"
+        return f"Error updating config: {e}", None
 
 
 async def reset_to_defaults() -> tuple[
-    float, float, float, float, float, float, str, go.Figure
+    float, float, float, float, float, float, float, float, str, go.Figure
 ]:
-    """Reset weights and thresholds to defaults.
+    """Reset all configuration to defaults.
 
     Returns:
         Tuple of default values and status
@@ -284,19 +195,20 @@ async def reset_to_defaults() -> tuple[
     except Exception:
         pass
 
-    fig = create_weights_chart(
-        DEFAULT_WALLET_WEIGHT,
-        DEFAULT_CLUSTER_WEIGHT,
-        DEFAULT_TOKEN_WEIGHT,
-        DEFAULT_CONTEXT_WEIGHT,
+    fig = create_scoring_chart(
+        DEFAULT_WALLET_WIN_RATE_WEIGHT,
+        DEFAULT_WALLET_PNL_WEIGHT,
     )
+
     return (
-        DEFAULT_WALLET_WEIGHT,
-        DEFAULT_CLUSTER_WEIGHT,
-        DEFAULT_TOKEN_WEIGHT,
-        DEFAULT_CONTEXT_WEIGHT,
         DEFAULT_TRADE_THRESHOLD,
-        DEFAULT_HIGH_CONVICTION_THRESHOLD,
+        DEFAULT_WALLET_WIN_RATE_WEIGHT,
+        DEFAULT_WALLET_PNL_WEIGHT,
+        DEFAULT_LEADER_BONUS,
+        DEFAULT_PNL_NORMALIZE_MIN,
+        DEFAULT_PNL_NORMALIZE_MAX,
+        DEFAULT_MIN_CLUSTER_BOOST,
+        DEFAULT_MAX_CLUSTER_BOOST,
         "Reset to default values!",
         fig,
     )
@@ -305,80 +217,65 @@ async def reset_to_defaults() -> tuple[
 def calculate_preview_score(
     win_rate: float,
     pnl: float,
-    timing: float,
     is_leader: bool,
-    cluster_size: int,
-    liquidity: float,
-    market_cap: float,
-    age_minutes: int,
+    cluster_boost: float,
+    win_rate_weight: float,
+    pnl_weight: float,
+    leader_bonus: float,
+    trade_threshold: float,
 ) -> str:
     """Calculate preview score with given inputs.
 
     Args:
         win_rate: Wallet win rate (0-1)
         pnl: Average PnL percentage
-        timing: Timing percentile (0-1)
         is_leader: Whether wallet is cluster leader
-        cluster_size: Number of wallets in cluster
-        liquidity: Token liquidity in USD
-        market_cap: Token market cap in USD
-        age_minutes: Token age in minutes
+        cluster_boost: Cluster boost multiplier
+        win_rate_weight: Weight for win rate
+        pnl_weight: Weight for PnL
+        leader_bonus: Leader bonus multiplier
+        trade_threshold: Trade eligibility threshold
 
     Returns:
         Formatted markdown with score breakdown
     """
-    # Wallet score calculation
-    pnl_normalized = max(0, min(1, (pnl + 100) / 600))
-    wallet_base = win_rate * 0.35 + pnl_normalized * 0.25 + timing * 0.25 + 0.5 * 0.15
-    leader_bonus = 0.15 if is_leader else 0
-    wallet_score = min(1, wallet_base + leader_bonus)
+    # Normalize PnL to 0-1 range
+    pnl_norm = max(0.0, min(1.0, (pnl - DEFAULT_PNL_NORMALIZE_MIN) /
+                           (DEFAULT_PNL_NORMALIZE_MAX - DEFAULT_PNL_NORMALIZE_MIN)))
 
-    # Cluster score
-    cluster_score = min(1, 0.5 + cluster_size * 0.05) if cluster_size > 1 else 0.5
+    # Calculate wallet score
+    wallet_base = win_rate * win_rate_weight + pnl_norm * pnl_weight
+    if is_leader:
+        wallet_base *= leader_bonus
+    wallet_score = min(1.0, wallet_base)
 
-    # Token score
-    liq_score = min(1, max(0, (liquidity - 1000) / 49000))
-    mcap_score = min(1, max(0.2, (market_cap - 10000) / 490000))
-    age_penalty = 0.3 * max(0, (5 - age_minutes) / 5) if age_minutes < 5 else 0
-    token_score = max(0, liq_score * 0.3 + mcap_score * 0.25 + 0.5 * 0.45 - age_penalty)
+    # Apply cluster boost
+    final_score = min(1.0, wallet_score * cluster_boost)
 
-    # Context score (fixed for preview)
-    context_score = 0.7
-
-    # Final score
-    final = (
-        wallet_score * DEFAULT_WALLET_WEIGHT
-        + cluster_score * DEFAULT_CLUSTER_WEIGHT
-        + token_score * DEFAULT_TOKEN_WEIGHT
-        + context_score * DEFAULT_CONTEXT_WEIGHT
-    )
-
-    # Eligibility
-    if final >= DEFAULT_HIGH_CONVICTION_THRESHOLD:
-        eligibility = "HIGH CONVICTION (1.5x position)"
-    elif final >= DEFAULT_TRADE_THRESHOLD:
-        eligibility = "TRADE ELIGIBLE (1.0x position)"
+    # Eligibility decision
+    if final_score >= trade_threshold:
+        eligibility = f"TRADE ELIGIBLE ({cluster_boost:.2f}x position)"
+        eligibility_color = "green"
     else:
         eligibility = "BELOW THRESHOLD (no trade)"
-
-    # Calculate contributions for cleaner output
-    w_contrib = wallet_score * DEFAULT_WALLET_WEIGHT
-    c_contrib = cluster_score * DEFAULT_CLUSTER_WEIGHT
-    t_contrib = token_score * DEFAULT_TOKEN_WEIGHT
-    x_contrib = context_score * DEFAULT_CONTEXT_WEIGHT
+        eligibility_color = "red"
 
     return f"""
 ### Preview Results
 
-**Final Score: {final:.4f}**
-**Eligibility: {eligibility}**
+**Final Score: {final_score:.4f}**
+<span style="color:{eligibility_color}">**{eligibility}**</span>
 
-| Factor | Score | Weight | Contribution |
-|--------|-------|--------|--------------|
-| Wallet | {wallet_score:.3f} | 30% | {w_contrib:.3f} |
-| Cluster | {cluster_score:.3f} | 25% | {c_contrib:.3f} |
-| Token | {token_score:.3f} | 25% | {t_contrib:.3f} |
-| Context | {context_score:.3f} | 20% | {x_contrib:.3f} |
+| Component | Value | Contribution |
+|-----------|-------|--------------|
+| Win Rate | {win_rate:.2f} | x{win_rate_weight:.2f} = {win_rate * win_rate_weight:.3f} |
+| PnL (normalized) | {pnl_norm:.2f} | x{pnl_weight:.2f} = {pnl_norm * pnl_weight:.3f} |
+| Leader Bonus | {'Yes' if is_leader else 'No'} | x{leader_bonus if is_leader else 1.0:.2f} |
+| **Wallet Score** | | **{wallet_score:.4f}** |
+| Cluster Boost | | x{cluster_boost:.2f} |
+| **Final Score** | | **{final_score:.4f}** |
+
+Threshold: {trade_threshold:.2f} | Position Size Multiplier: {cluster_boost:.2f}x
 """
 
 
@@ -406,9 +303,7 @@ async def fetch_recent_signals() -> list[list[str]]:
                         s.get("token_address", "")[:8] + "...",
                         f"{s.get('final_score', 0):.3f}",
                         f"{s.get('wallet_score', 0):.3f}",
-                        f"{s.get('cluster_score', 0):.3f}",
-                        f"{s.get('token_score', 0):.3f}",
-                        f"{s.get('context_score', 0):.3f}",
+                        f"{s.get('cluster_boost', 1.0):.2f}x",
                         s.get("eligibility_status", ""),
                     ]
                     for s in signals
@@ -418,201 +313,168 @@ async def fetch_recent_signals() -> list[list[str]]:
     return []
 
 
-def create_config_tab() -> None:  # noqa: PLR0915
-    """Create the config tab UI with scoring configuration."""
+def create_config_tab() -> None:
+    """Create the simplified config tab UI."""
     gr.Markdown("## Scoring Configuration")
     gr.Markdown(
-        "Adjust the weights for signal scoring factors. Changes take effect immediately."
+        "Configure the simplified 2-component scoring model. "
+        "Changes take effect immediately."
     )
 
     with gr.Tabs():
-        # Score Weights Tab
-        with gr.TabItem("Score Weights"):
+        # Main Configuration Tab
+        with gr.TabItem("Configuration"):
             with gr.Row():
                 with gr.Column(scale=1):
-                    gr.Markdown("### Factor Weights")
-                    gr.Markdown("*Weights must sum to 1.0*")
-
-                    wallet_slider = gr.Slider(
-                        minimum=0.0,
-                        maximum=0.5,
-                        value=DEFAULT_WALLET_WEIGHT,
+                    gr.Markdown("### Trade Threshold")
+                    threshold_slider = gr.Slider(
+                        minimum=0.5,
+                        maximum=0.9,
+                        value=DEFAULT_TRADE_THRESHOLD,
                         step=0.01,
-                        label="Wallet Score Weight",
-                        info="Win rate, PnL, timing, leader status",
-                        elem_id="config-wallet-weight",
+                        label="Trade Threshold",
+                        info="Signals must score >= this to trigger trades",
                     )
 
-                    cluster_slider = gr.Slider(
+                    gr.Markdown("### Wallet Score Weights")
+                    gr.Markdown("*Must sum to 1.0*")
+
+                    win_rate_slider = gr.Slider(
                         minimum=0.0,
-                        maximum=0.5,
-                        value=DEFAULT_CLUSTER_WEIGHT,
-                        step=0.01,
-                        label="Cluster Score Weight",
-                        info="Cluster activity amplification",
-                        elem_id="config-cluster-weight",
+                        maximum=1.0,
+                        value=DEFAULT_WALLET_WIN_RATE_WEIGHT,
+                        step=0.05,
+                        label="Win Rate Weight",
+                        info="Weight for wallet win rate (0-1)",
                     )
 
-                    token_slider = gr.Slider(
+                    pnl_slider = gr.Slider(
                         minimum=0.0,
-                        maximum=0.5,
-                        value=DEFAULT_TOKEN_WEIGHT,
-                        step=0.01,
-                        label="Token Score Weight",
-                        info="Liquidity, market cap, holders",
-                        elem_id="config-token-weight",
+                        maximum=1.0,
+                        value=DEFAULT_WALLET_PNL_WEIGHT,
+                        step=0.05,
+                        label="PnL Weight",
+                        info="Weight for normalized PnL (0-1)",
                     )
 
-                    context_slider = gr.Slider(
-                        minimum=0.0,
-                        maximum=0.5,
-                        value=DEFAULT_CONTEXT_WEIGHT,
-                        step=0.01,
-                        label="Context Score Weight",
-                        info="Time of day, market conditions",
-                        elem_id="config-context-weight",
-                    )
-
-                    sum_display = gr.Textbox(
+                    weight_sum_display = gr.Textbox(
                         label="Weight Sum",
-                        value="Total: 1.000 (valid)",
+                        value="Total: 1.00 (valid)",
                         interactive=False,
-                        elem_id="config-weight-sum",
+                    )
+
+                    gr.Markdown("### Leader & Cluster Boost")
+
+                    leader_slider = gr.Slider(
+                        minimum=1.0,
+                        maximum=2.0,
+                        value=DEFAULT_LEADER_BONUS,
+                        step=0.05,
+                        label="Leader Bonus Multiplier",
+                        info="Wallet score multiplier for cluster leaders",
+                    )
+
+                    min_boost_slider = gr.Slider(
+                        minimum=1.0,
+                        maximum=1.5,
+                        value=DEFAULT_MIN_CLUSTER_BOOST,
+                        step=0.05,
+                        label="Min Cluster Boost",
+                        info="Minimum cluster participation boost",
+                    )
+
+                    max_boost_slider = gr.Slider(
+                        minimum=1.0,
+                        maximum=2.5,
+                        value=DEFAULT_MAX_CLUSTER_BOOST,
+                        step=0.1,
+                        label="Max Cluster Boost",
+                        info="Maximum cluster participation boost",
+                    )
+
+                with gr.Column(scale=1):
+                    gr.Markdown("### PnL Normalization Range")
+                    pnl_min_slider = gr.Slider(
+                        minimum=-500.0,
+                        maximum=0.0,
+                        value=DEFAULT_PNL_NORMALIZE_MIN,
+                        step=10,
+                        label="PnL Min (%)",
+                        info="PnL values at or below this map to 0",
+                    )
+
+                    pnl_max_slider = gr.Slider(
+                        minimum=100.0,
+                        maximum=1000.0,
+                        value=DEFAULT_PNL_NORMALIZE_MAX,
+                        step=50,
+                        label="PnL Max (%)",
+                        info="PnL values at or above this map to 1",
+                    )
+
+                    gr.Markdown("### Wallet Score Composition")
+                    scoring_chart = gr.Plot(
+                        value=create_scoring_chart(
+                            DEFAULT_WALLET_WIN_RATE_WEIGHT,
+                            DEFAULT_WALLET_PNL_WEIGHT,
+                        ),
+                        label="Score Composition",
                     )
 
                     with gr.Row():
-                        normalize_btn = gr.Button(
-                            "Normalize to 1.0",
-                            variant="secondary",
-                            elem_id="config-normalize-btn",
-                        )
-                        apply_btn = gr.Button(
-                            "Apply Weights",
-                            variant="primary",
-                            elem_id="config-apply-weights-btn",
-                        )
+                        apply_btn = gr.Button("Apply Changes", variant="primary")
+                        reset_btn = gr.Button("Reset to Defaults", variant="secondary")
 
                     status_text = gr.Textbox(
                         label="Status",
                         value="",
                         interactive=False,
-                        elem_id="config-status",
                     )
 
-                with gr.Column(scale=1):
-                    gr.Markdown("### Weight Distribution")
-                    weights_chart = gr.Plot(
-                        value=create_weights_chart(
-                            DEFAULT_WALLET_WEIGHT,
-                            DEFAULT_CLUSTER_WEIGHT,
-                            DEFAULT_TOKEN_WEIGHT,
-                            DEFAULT_CONTEXT_WEIGHT,
-                        ),
-                        label="Weight Distribution",
-                    )
-
-            # Event handlers for sum display
-            for slider in [wallet_slider, cluster_slider, token_slider, context_slider]:
+            # Event handlers
+            for slider in [win_rate_slider, pnl_slider]:
                 slider.change(
-                    fn=calculate_sum,
-                    inputs=[wallet_slider, cluster_slider, token_slider, context_slider],
-                    outputs=[sum_display],
+                    fn=validate_wallet_weights,
+                    inputs=[win_rate_slider, pnl_slider],
+                    outputs=[weight_sum_display],
                 )
 
-            normalize_btn.click(
-                fn=normalize_weights,
-                inputs=[wallet_slider, cluster_slider, token_slider, context_slider],
-                outputs=[
-                    wallet_slider,
-                    cluster_slider,
-                    token_slider,
-                    context_slider,
-                    status_text,
-                    weights_chart,
-                ],
-            )
+            # Update chart when weights change
+            for slider in [win_rate_slider, pnl_slider]:
+                slider.change(
+                    fn=create_scoring_chart,
+                    inputs=[win_rate_slider, pnl_slider],
+                    outputs=[scoring_chart],
+                )
 
             apply_btn.click(
-                fn=update_weights,
-                inputs=[wallet_slider, cluster_slider, token_slider, context_slider],
-                outputs=[status_text, weights_chart],
-            )
-
-        # Trade Threshold Tab
-        with gr.TabItem("Trade Threshold"):
-            gr.Markdown("### Signal Score Threshold")
-            gr.Markdown(
-                "Signals must meet the minimum score threshold to be eligible for trading."
-            )
-
-            with gr.Row():
-                with gr.Column():
-                    trade_threshold_slider = gr.Slider(
-                        minimum=0.5,
-                        maximum=0.9,
-                        value=DEFAULT_TRADE_THRESHOLD,
-                        step=0.01,
-                        label="Minimum Trade Threshold",
-                        info="Signals below this score will not trigger trades",
-                        elem_id="config-trade-threshold",
-                    )
-
-                    high_conviction_slider = gr.Slider(
-                        minimum=0.7,
-                        maximum=0.95,
-                        value=DEFAULT_HIGH_CONVICTION_THRESHOLD,
-                        step=0.01,
-                        label="High Conviction Threshold",
-                        info="Signals above this get 1.5x position size",
-                        elem_id="config-high-conviction",
-                    )
-
-                    threshold_apply_btn = gr.Button(
-                        "Apply Threshold",
-                        variant="primary",
-                        elem_id="config-apply-threshold-btn",
-                    )
-
-                    threshold_status = gr.Textbox(
-                        label="Status",
-                        value="",
-                        interactive=False,
-                        elem_id="config-threshold-status",
-                    )
-
-                with gr.Column():
-                    gr.Markdown("### Position Sizing Tiers")
-                    gr.Markdown("""
-| Score Range | Conviction | Position Size |
-|-------------|------------|---------------|
-| >= 0.85 | High | 1.5x |
-| 0.70 - 0.84 | Standard | 1.0x |
-| < 0.70 | None | No Trade |
-""")
-                    gr.Markdown("### Reset")
-                    reset_btn = gr.Button(
-                        "Reset All to Defaults",
-                        variant="secondary",
-                        elem_id="config-reset-btn",
-                    )
-
-            threshold_apply_btn.click(
-                fn=update_threshold,
-                inputs=[trade_threshold_slider, high_conviction_slider],
-                outputs=[threshold_status],
+                fn=update_config,
+                inputs=[
+                    threshold_slider,
+                    win_rate_slider,
+                    pnl_slider,
+                    leader_slider,
+                    pnl_min_slider,
+                    pnl_max_slider,
+                    min_boost_slider,
+                    max_boost_slider,
+                ],
+                outputs=[status_text, scoring_chart],
             )
 
             reset_btn.click(
                 fn=reset_to_defaults,
                 outputs=[
-                    wallet_slider,
-                    cluster_slider,
-                    token_slider,
-                    context_slider,
-                    trade_threshold_slider,
-                    high_conviction_slider,
+                    threshold_slider,
+                    win_rate_slider,
+                    pnl_slider,
+                    leader_slider,
+                    pnl_min_slider,
+                    pnl_max_slider,
+                    min_boost_slider,
+                    max_boost_slider,
                     status_text,
-                    weights_chart,
+                    scoring_chart,
                 ],
             )
 
@@ -623,40 +485,35 @@ def create_config_tab() -> None:  # noqa: PLR0915
 
             with gr.Row():
                 with gr.Column():
-                    gr.Markdown("### Wallet Factors")
-                    win_rate = gr.Slider(0, 1, value=0.6, label="Win Rate")
-                    pnl = gr.Slider(-100, 500, value=50, label="Avg PnL %")
-                    timing = gr.Slider(0, 1, value=0.5, label="Timing Percentile")
-                    is_leader = gr.Checkbox(label="Is Cluster Leader")
+                    gr.Markdown("### Wallet Inputs")
+                    preview_win_rate = gr.Slider(
+                        0, 1, value=0.6, label="Win Rate", step=0.05
+                    )
+                    preview_pnl = gr.Slider(
+                        -100, 500, value=50, label="Avg PnL %", step=10
+                    )
+                    preview_is_leader = gr.Checkbox(label="Is Cluster Leader")
 
                 with gr.Column():
-                    gr.Markdown("### Token/Cluster Factors")
-                    cluster_size = gr.Slider(
-                        1, 20, value=1, step=1, label="Cluster Size"
-                    )
-                    liquidity = gr.Slider(0, 100000, value=10000, label="Liquidity USD")
-                    market_cap = gr.Slider(
-                        0, 1000000, value=100000, label="Market Cap USD"
-                    )
-                    age_minutes = gr.Slider(
-                        0, 60, value=30, label="Token Age (minutes)"
+                    gr.Markdown("### Cluster Context")
+                    preview_cluster_boost = gr.Slider(
+                        1.0, 1.8, value=1.0, label="Cluster Boost", step=0.1
                     )
 
-            calculate_btn = gr.Button("Calculate Preview Score", variant="primary")
-
+            calculate_btn = gr.Button("Calculate Score", variant="primary")
             result_display = gr.Markdown("")
 
             calculate_btn.click(
                 fn=calculate_preview_score,
                 inputs=[
-                    win_rate,
-                    pnl,
-                    timing,
-                    is_leader,
-                    cluster_size,
-                    liquidity,
-                    market_cap,
-                    age_minutes,
+                    preview_win_rate,
+                    preview_pnl,
+                    preview_is_leader,
+                    preview_cluster_boost,
+                    win_rate_slider,
+                    pnl_slider,
+                    leader_slider,
+                    threshold_slider,
                 ],
                 outputs=[result_display],
             )
@@ -664,6 +521,7 @@ def create_config_tab() -> None:  # noqa: PLR0915
         # Signal Analysis Tab
         with gr.TabItem("Signal Analysis"):
             gr.Markdown("### Recent Signal Scores")
+            gr.Markdown("*Simplified view: Final Score = Wallet Score × Cluster Boost*")
 
             refresh_signals_btn = gr.Button("Refresh", variant="secondary")
 
@@ -674,9 +532,7 @@ def create_config_tab() -> None:  # noqa: PLR0915
                     "Token",
                     "Score",
                     "Wallet",
-                    "Cluster",
-                    "Token",
-                    "Context",
+                    "Boost",
                     "Status",
                 ],
                 label="Recent Signals",

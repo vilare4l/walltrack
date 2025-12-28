@@ -11,7 +11,6 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from decimal import Decimal
 from enum import Enum
-from typing import Optional
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field, computed_field
@@ -76,42 +75,42 @@ class Order(BaseModel):
     side: OrderSide
 
     # References
-    signal_id: Optional[str] = None  # For ENTRY orders
-    position_id: Optional[str] = None  # For EXIT orders
-    exit_reason: Optional[str] = None  # For EXIT orders (e.g., "stop_loss", "take_profit")
+    signal_id: str | None = None  # For ENTRY orders
+    position_id: str | None = None  # For EXIT orders
+    exit_reason: str | None = None  # For EXIT orders (e.g., "stop_loss", "take_profit")
 
     # Token info
     token_address: str
-    token_symbol: Optional[str] = None
+    token_symbol: str | None = None
 
     # Amounts
     amount_sol: Decimal
-    amount_tokens: Optional[Decimal] = None  # Filled after execution
+    amount_tokens: Decimal | None = None  # Filled after execution
 
     # Pricing
     expected_price: Decimal
-    actual_price: Optional[Decimal] = None
+    actual_price: Decimal | None = None
     max_slippage_bps: int = 100  # 1% default
 
     # Status
     status: OrderStatus = OrderStatus.PENDING
 
     # Execution details
-    tx_signature: Optional[str] = None
-    filled_at: Optional[datetime] = None
+    tx_signature: str | None = None
+    filled_at: datetime | None = None
 
     # Retry management
     attempt_count: int = 0
     max_attempts: int = 3
-    last_error: Optional[str] = None
-    next_retry_at: Optional[datetime] = None
+    last_error: str | None = None
+    next_retry_at: datetime | None = None
 
     # Simulation
     is_simulated: bool = False
 
     # Locking (for retry worker concurrency control)
-    locked_until: Optional[datetime] = None
-    locked_by: Optional[str] = None
+    locked_until: datetime | None = None
+    locked_by: str | None = None
 
     # Timestamps
     created_at: datetime = Field(default_factory=datetime.utcnow)
@@ -119,7 +118,7 @@ class Order(BaseModel):
 
     @computed_field
     @property
-    def slippage_bps(self) -> Optional[int]:
+    def slippage_bps(self) -> int | None:
         """Calculate actual slippage in basis points."""
         if self.actual_price is None or self.expected_price == 0:
             return None
@@ -168,7 +167,7 @@ class Order(BaseModel):
     def mark_filled(
         self,
         actual_price: Decimal,
-        amount_tokens: Optional[Decimal] = None,
+        amount_tokens: Decimal | None = None,
     ) -> None:
         """Mark order as successfully filled."""
         self.actual_price = actual_price
@@ -208,12 +207,12 @@ class OrderCreateRequest(BaseModel):
     order_type: OrderType
     side: OrderSide
     token_address: str
-    token_symbol: Optional[str] = None
+    token_symbol: str | None = None
     amount_sol: Decimal
     expected_price: Decimal
     max_slippage_bps: int = 100
-    signal_id: Optional[str] = None
-    position_id: Optional[str] = None
+    signal_id: str | None = None
+    position_id: str | None = None
     is_simulated: bool = False
 
 
@@ -223,10 +222,10 @@ class OrderSummary(BaseModel):
     id: UUID
     order_type: OrderType
     side: OrderSide
-    token_symbol: Optional[str]
+    token_symbol: str | None
     amount_sol: Decimal
     status: OrderStatus
     attempt_count: int
     is_simulated: bool
     created_at: datetime
-    slippage_bps: Optional[int] = None
+    slippage_bps: int | None = None

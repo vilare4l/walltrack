@@ -23,7 +23,14 @@ def _get_api_url() -> str:
 
     # Fall back to settings
     settings = get_settings()
-    return f"http://{settings.host}:{settings.port}"
+    
+    # Use api_base_url if configured
+    if settings.api_base_url:
+        return settings.api_base_url
+    
+    # Construct from host and port, using localhost instead of 0.0.0.0
+    host = "localhost" if settings.host == "0.0.0.0" else settings.host
+    return f"http://{host}:{settings.port}"
 
 
 async def _fetch_clusters() -> list[dict[str, Any]]:
@@ -133,6 +140,79 @@ async def _update_multipliers() -> str:
     return "Multipliers updated"
 
 
+async def _rebuild_all_clusters() -> str:
+    """Rebuild all clusters (combines all 4 manual steps)."""
+    api_url = _get_api_url()
+    results = []
+
+    try:
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            # Step 1: Run cluster discovery
+            resp = await client.post(f"{api_url}/api/clusters/find")
+            if resp.status_code == 200:
+                data = resp.json()
+                results.append(f"Clusters: {data.get('total', 0)}")
+
+            # Step 2: Analyze co-occurrence
+            resp = await client.post(
+                f"{api_url}/api/clusters/analysis/cooccurrence", json={}
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                results.append(f"Co-occur: {len(data.get('edges', []))}")
+
+            # Step 3: Detect leaders
+            clusters = await _fetch_clusters()
+            detected = 0
+            for cluster in clusters:
+                resp = await client.post(
+                    f"{api_url}/api/clusters/{cluster['id']}/detect-leader"
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if data.get("leader_address"):
+                        detected += 1
+            results.append(f"Leaders: {detected}")
+
+            # Step 4: Update multipliers
+            resp = await client.post(f"{api_url}/api/clusters/signals/update-multipliers")
+            if resp.status_code == 200:
+                data = resp.json()
+                results.append(f"Multipliers: {len(data)}")
+
+    except Exception as e:
+        return f"Rebuild error: {e!s}"
+
+    return " | ".join(results)
+
+
+async def _save_onboarding_config(
+    max_depth: int,
+    min_cluster_size: int,
+    min_quick_score: float,
+    max_network_size: int,
+) -> str:
+    """Save onboarding configuration."""
+    api_url = _get_api_url()
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{api_url}/api/clusters/onboarding/config",
+                json={
+                    "max_depth": max_depth,
+                    "min_cluster_size": min_cluster_size,
+                    "min_quick_score": min_quick_score,
+                    "max_network_size": max_network_size,
+                },
+            )
+            if resp.status_code == 200:
+                return "Configuration saved"
+            return f"Error: {resp.status_code}"
+    except Exception as e:
+        return f"Error: {e!s}"
+
+
 def _sync_fetch_clusters() -> pd.DataFrame:
     """Sync wrapper for fetching clusters."""
     try:
@@ -215,13 +295,56 @@ def _sync_update_multipliers() -> tuple[str, pd.DataFrame]:
     return result, df
 
 
+def _sync_rebuild_all() -> tuple[str, pd.DataFrame]:
+    """Sync wrapper for rebuilding all clusters."""
+    try:
+        result = asyncio.get_event_loop().run_until_complete(_rebuild_all_clusters())
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(_rebuild_all_clusters())
+
+    df = _sync_fetch_clusters()
+    return result, df
+
+
+def _sync_save_onboarding_config(
+    max_depth: int,
+    min_cluster_size: int,
+    min_quick_score: float,
+    max_network_size: int,
+) -> str:
+    """Sync wrapper for saving onboarding config."""
+    try:
+        result = asyncio.get_event_loop().run_until_complete(
+            _save_onboarding_config(
+                max_depth, min_cluster_size, min_quick_score, max_network_size
+            )
+        )
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(
+            _save_onboarding_config(
+                max_depth, min_cluster_size, min_quick_score, max_network_size
+            )
+        )
+
+    return result
+
+
 def create_clusters_tab() -> None:
     """Create the clusters tab UI."""
     gr.Markdown("## Cluster Analysis")
+
+    # Info banner explaining automatic clustering
     gr.Markdown(
-        "Analyze wallet relationships to identify coordinated groups. "
-        "Clusters are formed from funding relationships, synchronized buying, "
-        "and co-occurrence patterns."
+        """
+        > **Automatic Clustering**: Clusters are now created automatically when
+        > wallets are profiled. Network discovery, leader detection, and multiplier
+        > calculation happen in the background. Use "Rebuild All" to manually
+        > recalculate all clusters if needed.
+        """
     )
 
     with gr.Row():
@@ -234,20 +357,61 @@ def create_clusters_tab() -> None:
             )
 
         with gr.Column(scale=1):
-            # Actions panel
+            # Main actions
             gr.Markdown("### Actions")
 
-            discover_btn = gr.Button("Discover Clusters", variant="primary")
-            cooccurrence_btn = gr.Button("Analyze Co-occurrence")
-            leader_btn = gr.Button("Detect Leaders")
-            multiplier_btn = gr.Button("Update Multipliers")
-            refresh_btn = gr.Button("Refresh")
+            with gr.Row():
+                refresh_btn = gr.Button("Refresh", variant="primary")
+                rebuild_all_btn = gr.Button("Rebuild All", variant="secondary")
 
             action_status = gr.Textbox(
                 label="Status",
                 interactive=False,
                 lines=2,
             )
+
+            # Onboarding Configuration accordion
+            with gr.Accordion("Onboarding Configuration", open=False):
+                max_depth_dd = gr.Dropdown(
+                    choices=["0", "1", "2"],
+                    value="1",
+                    label="Max Recursion Depth",
+                    info="How many hops to traverse when discovering network",
+                )
+                min_cluster_size_dd = gr.Dropdown(
+                    choices=["2", "3", "4", "5"],
+                    value="3",
+                    label="Min Cluster Size",
+                    info="Minimum wallets needed to form a cluster",
+                )
+                min_quick_score_sl = gr.Slider(
+                    minimum=0.2,
+                    maximum=0.8,
+                    value=0.4,
+                    step=0.1,
+                    label="Min Quick Score",
+                    info="Minimum score for wallet to be included",
+                )
+                max_network_size_dd = gr.Dropdown(
+                    choices=["10", "20", "50", "100"],
+                    value="20",
+                    label="Max Network Size",
+                    info="Maximum wallets to analyze per hop (safeguard)",
+                )
+                save_config_btn = gr.Button("Save Configuration")
+                config_status = gr.Textbox(
+                    label="",
+                    interactive=False,
+                    show_label=False,
+                )
+
+            # Advanced Actions accordion
+            with gr.Accordion("Advanced Actions", open=False):
+                gr.Markdown("*Run individual steps of the clustering pipeline:*")
+                discover_btn = gr.Button("Discover Clusters")
+                cooccurrence_btn = gr.Button("Analyze Co-occurrence")
+                leader_btn = gr.Button("Detect Leaders")
+                multiplier_btn = gr.Button("Update Multipliers")
 
     with gr.Row(), gr.Column():
         gr.Markdown("### Cluster Statistics")
@@ -321,10 +485,39 @@ def create_clusters_tab() -> None:
         stats = update_stats(df)
         return status, df, *stats
 
+    def on_rebuild_all() -> tuple[str, pd.DataFrame, int, float, float, int]:
+        status, df = _sync_rebuild_all()
+        stats = update_stats(df)
+        return status, df, *stats
+
+    def on_save_config(
+        max_depth: str,
+        min_cluster_size: str,
+        min_quick_score: float,
+        max_network_size: str,
+    ) -> str:
+        return _sync_save_onboarding_config(
+            int(max_depth),
+            int(min_cluster_size),
+            min_quick_score,
+            int(max_network_size),
+        )
+
     # Wire up events
     refresh_btn.click(
         fn=on_refresh,
         outputs=[cluster_table, total_clusters, avg_cohesion, avg_size, with_leader],
+    )
+
+    rebuild_all_btn.click(
+        fn=on_rebuild_all,
+        outputs=[action_status, cluster_table, total_clusters, avg_cohesion, avg_size, with_leader],
+    )
+
+    save_config_btn.click(
+        fn=on_save_config,
+        inputs=[max_depth_dd, min_cluster_size_dd, min_quick_score_sl, max_network_size_dd],
+        outputs=[config_status],
     )
 
     discover_btn.click(

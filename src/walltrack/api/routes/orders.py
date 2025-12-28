@@ -6,8 +6,6 @@ Epic 10.5-13: Required for Order UI.
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Optional
 from uuid import UUID
 
 import structlog
@@ -71,13 +69,13 @@ class BulkStatusRequest(BaseModel):
 
 @router.get("", response_model=OrderListResponse)
 async def list_orders(
-    status: Optional[str] = Query(
+    status: str | None = Query(
         None, description="Filter by status (pending, submitted, confirming, filled, failed, cancelled)"
     ),
-    order_type: Optional[str] = Query(
+    order_type: str | None = Query(
         None, description="Filter by type (entry, exit)"
     ),
-    is_simulated: Optional[bool] = Query(
+    is_simulated: bool | None = Query(
         None, description="Filter by simulation mode"
     ),
     limit: int = Query(50, ge=1, le=200, description="Maximum orders to return"),
@@ -168,7 +166,7 @@ async def get_order_stats(
 
 @router.get("/active", response_model=OrderListResponse)
 async def list_active_orders(
-    is_simulated: Optional[bool] = Query(None, description="Filter by simulation mode"),
+    is_simulated: bool | None = Query(None, description="Filter by simulation mode"),
     limit: int = Query(50, ge=1, le=200, description="Maximum orders to return"),
 ) -> OrderListResponse:
     """

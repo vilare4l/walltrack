@@ -20,7 +20,13 @@ class SignalStatus(str, Enum):
 
 
 class SignalLogEntry(BaseModel):
-    """Complete signal log entry for storage."""
+    """Complete signal log entry for storage.
+
+    Epic 14 Simplification:
+    - wallet_score: Primary score from wallet reputation
+    - cluster_boost: Multiplier from cluster participation (1.0-1.8x)
+    - Removed: token_score, context_score, conviction_tier (deprecated)
+    """
 
     # Identification
     id: str | None = None  # UUID from database
@@ -34,17 +40,20 @@ class SignalLogEntry(BaseModel):
     amount_sol: float = 0.0
     slot: int | None = None
 
-    # Scoring (nullable if filtered before scoring)
-    final_score: float | None = None
-    wallet_score: float | None = None
-    cluster_score: float | None = None
-    token_score: float | None = None
-    context_score: float | None = None
+    # Scoring (simplified in Epic 14)
+    final_score: float | None = None  # wallet_score * cluster_boost
+    wallet_score: float | None = None  # Wallet reputation score
+    cluster_boost: float | None = None  # Cluster multiplier (1.0-1.8x)
+
+    # Deprecated fields (kept for backward compatibility)
+    cluster_score: float | None = None  # DEPRECATED: Use cluster_boost
+    token_score: float | None = None  # DEPRECATED: Now binary gate
+    context_score: float | None = None  # DEPRECATED: Removed
+    conviction_tier: str | None = None  # DEPRECATED: Use position_multiplier
 
     # Status
     status: SignalStatus = SignalStatus.RECEIVED
     eligibility_status: str | None = None  # trade_eligible, below_threshold
-    conviction_tier: str | None = None  # high, standard, none
 
     # Filtering info
     filter_status: str | None = None  # passed, discarded, blocked

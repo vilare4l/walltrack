@@ -135,6 +135,10 @@ class SignalFilter:
 
         Called only for signals that passed filtering.
 
+        Epic 14 Story 14-5: Cluster info (cluster_id, is_cluster_leader)
+        is no longer available from WalletCacheEntry. Use defaults here;
+        ClusterService populates cluster info at scoring time.
+
         Args:
             event: Original swap event
             filter_result: Result of filtering
@@ -152,8 +156,9 @@ class SignalFilter:
             amount_sol=event.amount_sol,
             timestamp=event.timestamp,
             tx_signature=event.tx_signature,
-            cluster_id=metadata.cluster_id if metadata else None,
-            is_cluster_leader=metadata.is_leader if metadata else False,
+            # Epic 14-5: Cluster info now from ClusterService at scoring time
+            cluster_id=None,
+            is_cluster_leader=False,
             wallet_reputation=metadata.reputation_score if metadata else 0.5,
             filter_status=filter_result.status,
             filter_time_ms=filter_result.lookup_time_ms,

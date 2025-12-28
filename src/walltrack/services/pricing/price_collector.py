@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 import structlog
 
@@ -31,7 +31,7 @@ class PriceCollector:
         self,
         price_oracle: PriceOracle,
         position_repo: PositionRepository,
-        price_history_repo: Optional[PriceHistoryRepository] = None,
+        price_history_repo: PriceHistoryRepository | None = None,
         collection_interval: float = 5.0,
     ):
         """
@@ -48,7 +48,7 @@ class PriceCollector:
         self.history_repo = price_history_repo
         self.interval = collection_interval
         self._running = False
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._collection_count = 0
 
     async def start(self) -> None:
@@ -322,7 +322,7 @@ class PriceHistoryCompressor:
 
     async def compress_old_data(
         self,
-        older_than_hours: Optional[int] = None,
+        older_than_hours: int | None = None,
     ) -> int:
         """
         Compress price history older than threshold.
@@ -440,7 +440,7 @@ class PriceHistoryCleanup:
 
     async def cleanup_closed_positions(
         self,
-        closed_days_ago: Optional[int] = None,
+        closed_days_ago: int | None = None,
     ) -> int:
         """
         Delete detailed history for long-closed positions.
