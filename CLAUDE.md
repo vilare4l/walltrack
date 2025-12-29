@@ -36,6 +36,59 @@ walltrack/
 
 ---
 
+## Règles OBLIGATOIRES pour les agents
+
+### 1. Consultation Legacy (AVANT de coder)
+
+**TOUJOURS** vérifier dans `legacy/` avant de développer :
+
+| Domaine | Où chercher |
+|---------|-------------|
+| API Clients | `legacy/src/walltrack/services/base.py` |
+| Exceptions | `legacy/src/walltrack/core/exceptions.py` |
+| Data Layer | `legacy/src/walltrack/data/` |
+| UI Gradio | `legacy/src/walltrack/ui/` |
+| **DB Schema** | `legacy/migrations/` |
+| Tests | `legacy/tests/` |
+
+**Objectif:** Ne pas réinventer la roue, reproduire les patterns qui marchent.
+
+### 2. Migrations DB (OBLIGATOIRE)
+
+**La base Supabase V2 est VIDE.** Les migrations dans `legacy/migrations/` sont de la **documentation seulement**.
+
+**Toute création de table ou modification de schéma DOIT s'accompagner d'une migration SQL dans V2 :**
+
+```
+src/walltrack/data/supabase/migrations/
+├── 001_config_table.sql      # Exemple
+├── 002_tokens_table.sql
+└── ...
+```
+
+**Workflow:**
+1. Consulter `legacy/migrations/` pour voir le schéma V1 (référence)
+2. Créer la migration V2 dans `src/walltrack/data/supabase/migrations/`
+3. Exécuter la migration sur Supabase
+
+**Format migration:**
+```sql
+-- Migration: NNN_description.sql
+-- Date: YYYY-MM-DD
+-- Story: X.Y
+
+CREATE TABLE IF NOT EXISTS walltrack.table_name (
+    ...
+);
+
+-- Rollback (commenté)
+-- DROP TABLE IF EXISTS walltrack.table_name;
+```
+
+**Ne JAMAIS supposer qu'une table existe** - la base V2 est vide, il faut créer les migrations.
+
+---
+
 ## Stack technique
 
 - Python 3.11+ / FastAPI / Gradio
@@ -55,6 +108,28 @@ walltrack/
 6. Scoring signals
 7. Positions
 8. Orders (entry/exit)
+
+---
+
+## Tests
+
+**IMPORTANT:** Ne pas lancer tous les tests ensemble. Playwright (E2E) interfère avec les autres tests.
+
+```bash
+# Tests unitaires + intégration (rapides, ~40s)
+uv run pytest tests/unit tests/integration -v
+
+# Tests E2E Playwright (séparément, ouvre le navigateur)
+uv run pytest tests/e2e -v
+```
+
+**Structure des tests:**
+```
+tests/
+├── unit/           # Tests isolés avec mocks
+├── integration/    # Tests avec composants réels mockés
+└── e2e/            # Tests Playwright (navigateur)
+```
 
 ---
 

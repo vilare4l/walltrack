@@ -1,0 +1,144 @@
+# generated: 2025-12-29
+# project: walltrack
+# project_key: walltrack-v2
+# tracking_system: file-system
+# story_location: docs/sprint-artifacts/epic-{n}/
+
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+#
+# Epic Status Transitions:
+#   - backlog → in-progress: Automatically when first story is created (via create-story)
+#   - in-progress → done: Manually when all stories reach 'done' status
+#
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - drafted: Story file created in stories folder
+#   - ready-for-dev: Draft approved and story context created
+#   - in-progress: Developer actively working on implementation
+#   - review: Ready for code review (via Dev's code-review workflow)
+#   - done: Story completed
+#
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - completed: Retrospective has been done
+#
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when first story is created
+# - Stories can be worked in parallel if team capacity allows
+# - SM typically drafts next story after previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+#
+# FOLDER STRUCTURE:
+# =================
+# docs/sprint-artifacts/
+#   ├── sprint-status.yaml
+#   ├── epic-1/  → Stories 1.1 to 1.6
+#   ├── epic-2/  → Stories 2.1 to 2.4
+#   ├── epic-3/  → Stories 3.1 to 3.6
+#   ├── epic-4/  → Stories 4.1 to 4.6
+#   ├── epic-5/  → Stories 5.1 to 5.6
+#   ├── epic-6/  → Stories 6.1 to 6.7
+#   ├── epic-7/  → Stories 7.1 to 7.7
+#   └── epic-8/  → Stories 8.1 to 8.6
+
+generated: 2025-12-29
+project: walltrack
+project_key: walltrack-v2
+tracking_system: file-system
+story_location: docs/sprint-artifacts/epic-{n}/
+
+development_status:
+  # Epic 1: Foundation & Core Infrastructure
+  # Location: docs/sprint-artifacts/epic-1/
+  epic-1: done
+  1-1-project-structure-configuration: done
+  1-2-database-connections: done
+  1-3-base-api-client-exception-hierarchy: done
+  1-4-gradio-base-app-status-bar: done
+  1-5-trading-wallet-connection: done
+  1-6-integration-e2e-validation: done
+  1-7-database-migrations: done  # Hotfix - gap identified in retrospective
+  epic-1-retrospective: completed
+
+  # Epic 2: Token Discovery & Surveillance
+  # Location: docs/sprint-artifacts/epic-2/
+  epic-2: done
+  2-1-token-discovery-trigger: done
+  2-2-token-surveillance-scheduler: done
+  2-3-token-explorer-view: done
+  2-4-integration-e2e-validation: done
+  epic-2-retrospective: optional
+
+  # Epic 3: Wallet Discovery & Profiling
+  # Location: docs/sprint-artifacts/epic-3/
+  epic-3: backlog
+  3-1-wallet-discovery-from-tokens: backlog
+  3-2-wallet-performance-analysis: backlog
+  3-3-wallet-behavioral-profiling: backlog
+  3-4-wallet-decay-detection: backlog
+  3-5-wallet-blacklist-watchlist-management: backlog
+  3-6-integration-e2e-validation: backlog
+  epic-3-retrospective: optional
+
+  # Epic 4: Cluster Analysis
+  # Location: docs/sprint-artifacts/epic-4/
+  epic-4: backlog
+  4-1-wallet-funding-relationships: backlog
+  4-2-synchronized-buying-detection: backlog
+  4-3-co-appearance-detection: backlog
+  4-4-cluster-grouping-leaders: backlog
+  4-5-cluster-drill-down-score-amplification: backlog
+  4-6-integration-e2e-validation: backlog
+  epic-4-retrospective: optional
+
+  # Epic 5: Signal Pipeline
+  # Location: docs/sprint-artifacts/epic-5/
+  epic-5: backlog
+  5-1-helius-webhook-reception: backlog
+  5-2-wallet-filtering: backlog
+  5-3-multi-factor-signal-scoring: backlog
+  5-4-threshold-application-token-characteristics: backlog
+  5-5-signal-logging-explorer-view: backlog
+  5-6-integration-e2e-validation: backlog
+  epic-5-retrospective: optional
+
+  # Epic 6: Position & Order Management
+  # Location: docs/sprint-artifacts/epic-6/
+  epic-6: backlog
+  6-1-position-creation-from-signals: backlog
+  6-2-dynamic-position-sizing: backlog
+  6-3-entry-order-creation: backlog
+  6-4-exit-order-strategy: backlog
+  6-5-position-order-tracking: backlog
+  6-6-simulation-mode: backlog
+  6-7-integration-e2e-validation: backlog
+  epic-6-retrospective: optional
+
+  # Epic 7: Risk Management & Circuit Breakers
+  # Location: docs/sprint-artifacts/epic-7/
+  epic-7: backlog
+  7-1-drawdown-circuit-breaker: backlog
+  7-2-consecutive-loss-protection: backlog
+  7-3-position-limits: backlog
+  7-4-manual-pause-resume: backlog
+  7-5-risk-configuration: backlog
+  7-6-risk-alerts-notifications: backlog
+  7-7-integration-e2e-validation: backlog
+  epic-7-retrospective: optional
+
+  # Epic 8: Execution & Performance Dashboard
+  # Location: docs/sprint-artifacts/epic-8/
+  epic-8: backlog
+  8-1-jupiter-live-execution: backlog
+  8-2-mode-toggle-simulation-live: backlog
+  8-3-performance-metrics-dashboard: backlog
+  8-4-trade-history: backlog
+  8-5-home-dashboard-integration: backlog
+  8-6-integration-e2e-validation: backlog
+  epic-8-retrospective: optional

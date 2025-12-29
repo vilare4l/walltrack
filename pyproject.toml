@@ -1,6 +1,6 @@
 [project]
 name = "walltrack"
-version = "0.1.0"
+version = "2.0.0"
 description = "Intelligent wallet tracking and automated trading system for Solana memecoins"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -133,7 +133,16 @@ ignore = [
 known-first-party = ["walltrack"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["E501", "PLC0415"]  # Allow long lines and non-top-level imports in tests
+"tests/*" = [
+    "E501",     # Allow long lines in tests
+    "PLC0415",  # Allow non-top-level imports in tests
+    "ARG001",   # Unused function arguments (fixtures must be passed even if unused)
+    "ARG002",   # Unused method arguments (fixtures must be passed even if unused)
+    "ERA001",   # Allow commented code (documentation examples)
+]
+"tests/conftest.py" = [
+    "TCH003",   # Generator import needed at runtime for fixtures
+]
 
 # ============================================================================
 # mypy configuration
@@ -160,6 +169,17 @@ module = [
     "sklearn.*",
 ]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# UI modules have complex type interactions with Gradio
+# Gradio's dynamic typing and gr.update() returns make strict typing impractical
+# gr.update() returns dict but type hints expect specific types
+module = ["walltrack.ui.*"]
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+warn_return_any = false
+check_untyped_defs = false
+disallow_any_generics = false
 
 [dependency-groups]
 dev = [

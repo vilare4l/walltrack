@@ -22,16 +22,25 @@ services:
     container_name: walltrack-app
 
     ports:
-      - "${PORT:-8080}:8000"      # FastAPI API
+      - "${PORT:-8080}:8000"      # FastAPI API + Gradio Dashboard at /dashboard
+      # Note: For E2E tests, set BASE_URL=http://localhost:8080/dashboard
 
     env_file: .env
 
     environment:
       - PYTHONPATH=/app/src
       - PYTHONUNBUFFERED=1
-      # Discovery Scheduler
+      # ===================================
+      # Discovery Scheduler Configuration
+      # ===================================
+      # DISCOVERY_SCHEDULER_ENABLED: Enable/disable auto discovery
+      #   - true: Scheduler starts with app and runs token discovery automatically
+      #   - false: Manual discovery only (useful for testing/CI)
       - DISCOVERY_SCHEDULER_ENABLED=${DISCOVERY_SCHEDULER_ENABLED:-true}
-      - DISCOVERY_SCHEDULE_HOURS=${DISCOVERY_SCHEDULE_HOURS:-6}
+      # DISCOVERY_SCHEDULE_HOURS: Interval between discovery runs (1, 2, 4, 8 hours)
+      #   - Default: 4 hours (recommended for production)
+      #   - Lower values increase API calls but fresher data
+      - DISCOVERY_SCHEDULE_HOURS=${DISCOVERY_SCHEDULE_HOURS:-4}
 
     volumes:
       # Development: mount source for hot reload
@@ -40,7 +49,7 @@ services:
       - walltrack_logs:/app/logs
 
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -52,48 +61,10 @@ services:
       - walltrack_network
 
   # ========================================
-  # WallTrack Dashboard (Gradio)
+  # NOTE: Gradio Dashboard is mounted on FastAPI at /dashboard
+  # No separate dashboard service needed in V2
+  # Access dashboard at: http://localhost:8000/dashboard
   # ========================================
-  walltrack-dashboard:
-    build:
-      context: .
-      dockerfile: Dockerfile
-
-    container_name: walltrack-dashboard
-
-    command: ["uv", "run", "python", "-c", "from walltrack.ui.dashboard import launch_dashboard; launch_dashboard()"]
-
-    ports:
-      - "${UI_PORT:-7865}:7860"   # Gradio Dashboard
-
-    env_file: .env
-
-    environment:
-      - PYTHONPATH=/app/src
-      - PYTHONUNBUFFERED=1
-      # Dashboard connects to API container via internal Docker network
-      - API_BASE_URL=http://walltrack-app:8000
-
-    volumes:
-      - ./src:/app/src:ro
-      - walltrack_logs:/app/logs
-
-    # Dashboard health check on Gradio port
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:7860/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 60s
-
-    depends_on:
-      walltrack:
-        condition: service_healthy
-
-    restart: unless-stopped
-
-    networks:
-      - walltrack_network
 
   # ========================================
   # Webhook Receiver (Optional - for ngrok/cloudflare tunnel)
@@ -122,37 +93,39 @@ services:
   # ========================================
   # Position Monitor (Background Worker)
   # ========================================
-  walltrack-monitor:
-    build:
-      context: .
-      dockerfile: Dockerfile
-
-    container_name: walltrack-monitor
-
-    command: ["uv", "run", "python", "-m", "walltrack.scheduler.jobs"]
-
-    env_file: .env
-
-    environment:
-      - PYTHONPATH=/app/src
-      - PYTHONUNBUFFERED=1
-
-    volumes:
-      - ./src:/app/src:ro
-      - walltrack_logs:/app/logs
-
-    # Disable health check for background worker (no HTTP server)
-    healthcheck:
-      disable: true
-
-    depends_on:
-      walltrack:
-        condition: service_healthy
-
-    restart: unless-stopped
-
-    networks:
-      - walltrack_network
+  # NOTE: Commented out for V2 - scheduler module not yet implemented
+  # Will be enabled in Epic 6: Position & Order Management
+  #
+  # walltrack-monitor:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #
+  #   container_name: walltrack-monitor
+  #
+  #   command: ["uv", "run", "python", "-m", "walltrack.scheduler.jobs"]
+  #
+  #   env_file: .env
+  #
+  #   environment:
+  #     - PYTHONPATH=/app/src
+  #     - PYTHONUNBUFFERED=1
+  #
+  #   volumes:
+  #     - ./src:/app/src:ro
+  #     - walltrack_logs:/app/logs
+  #
+  #   healthcheck:
+  #     disable: true
+  #
+  #   depends_on:
+  #     walltrack:
+  #       condition: service_healthy
+  #
+  #   restart: unless-stopped
+  #
+  #   networks:
+  #     - walltrack_network
 
 # ========================================
 # Volumes

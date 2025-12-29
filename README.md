@@ -30,10 +30,26 @@ WallTrack monitors profitable Solana wallets, analyzes their trading patterns, a
 uv sync
 
 # Run tests
-uv run pytest
+uv run pytest tests/unit/ tests/integration/ -v
 
 # Start the application
-uv run walltrack
+uv run uvicorn walltrack.main:app --reload
+
+# Access dashboard at http://localhost:8000/dashboard
+```
+
+## Docker
+
+```bash
+# Build and run
+docker compose up -d
+
+# Access:
+# - API: http://localhost:8080/api/health
+# - Dashboard: http://localhost:8080/dashboard
+
+# Run E2E tests against Docker
+BASE_URL=http://localhost:8080/dashboard uv run pytest tests/e2e/ -v
 ```
 
 ## Development
