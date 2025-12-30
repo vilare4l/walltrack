@@ -79,7 +79,7 @@ development_status:
   # Location: docs/sprint-artifacts/epic-3/
   epic-3: in-progress
   3-1-wallet-discovery-from-tokens: done
-  3-2-wallet-performance-analysis: review
+  3-2-wallet-performance-analysis: done
   3-3-wallet-behavioral-profiling: ready-for-dev
   3-4-wallet-decay-detection: backlog
   3-5-wallet-blacklist-watchlist-management: backlog
