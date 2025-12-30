@@ -73,14 +73,14 @@ development_status:
   2-2-token-surveillance-scheduler: done
   2-3-token-explorer-view: done
   2-4-integration-e2e-validation: done
-  epic-2-retrospective: optional
+  epic-2-retrospective: completed
 
   # Epic 3: Wallet Discovery & Profiling
   # Location: docs/sprint-artifacts/epic-3/
-  epic-3: backlog
-  3-1-wallet-discovery-from-tokens: backlog
-  3-2-wallet-performance-analysis: backlog
-  3-3-wallet-behavioral-profiling: backlog
+  epic-3: in-progress
+  3-1-wallet-discovery-from-tokens: done
+  3-2-wallet-performance-analysis: review
+  3-3-wallet-behavioral-profiling: ready-for-dev
   3-4-wallet-decay-detection: backlog
   3-5-wallet-blacklist-watchlist-management: backlog
   3-6-integration-e2e-validation: backlog
