@@ -78,23 +78,22 @@ development_status:
   # Epic 3: Wallet Discovery & Profiling
   # Location: docs/sprint-artifacts/epic-3/
   epic-3: in-progress
-  3-1-wallet-discovery-from-tokens: done
+  3-1-wallet-discovery-from-tokens: done  # CORRECTED 2025-12-30: All 20 code review issues resolved + validated (16/16 tests pass)
   3-2-wallet-performance-analysis: done
-  3-3-wallet-behavioral-profiling: ready-for-dev
-  3-4-wallet-decay-detection: backlog
+  3-3-wallet-behavioral-profiling: done  # COMPLETED 2025-12-30: All 8 tasks done, 4 ACs met, 54 new tests (376 total passing), UI + E2E complete
+  3-4-wallet-decay-detection: done  # COMPLETED 2025-12-30: All 5 tasks complete, 5 ACs met, migrations + models + service + repo + UI + tests
   3-5-wallet-blacklist-watchlist-management: backlog
   3-6-integration-e2e-validation: backlog
   epic-3-retrospective: optional
 
-  # Epic 4: Cluster Analysis
+  # Epic 4: Network Discovery & Clustering (FUNDED_BY Only)
   # Location: docs/sprint-artifacts/epic-4/
+  # Note: Stories 4.2 (synchronized-buying) and 4.3 (co-appearance) removed - out of scope V2
   epic-4: backlog
-  4-1-wallet-funding-relationships: backlog
-  4-2-synchronized-buying-detection: backlog
-  4-3-co-appearance-detection: backlog
-  4-4-cluster-grouping-leaders: backlog
-  4-5-cluster-drill-down-score-amplification: backlog
-  4-6-integration-e2e-validation: backlog
+  4-1-network-discovery-from-funders: backlog
+  4-2-wallet-funding-relationships: backlog
+  4-3-cluster-grouping-leaders: backlog
+  4-4-integration-e2e-validation: backlog
   epic-4-retrospective: optional
 
   # Epic 5: Signal Pipeline
