@@ -159,6 +159,114 @@ class HeliusClient(BaseAPIClient):
                 message=f"Unexpected error: {e}",
             ) from e
 
+    async def get_token_transactions(
+        self,
+        token_mint: str,
+        limit: int = 1000,
+        tx_type: str | None = "SWAP",
+    ) -> list[dict]:
+        """Get transaction history for a token mint address.
+
+        Fetches enriched transaction data from Helius API for a token,
+        showing all swaps and transfers involving this token.
+
+        Args:
+            token_mint: Solana token mint address to fetch transactions for.
+            limit: Maximum number of transactions to return (default: 1000, max: 1000).
+            tx_type: Filter by transaction type (e.g., "SWAP", "TRANSFER").
+                    Default: "SWAP" for token swaps only.
+
+        Returns:
+            List of transaction dictionaries from Helius API.
+
+        Raises:
+            ExternalServiceError: If API request fails after retries.
+            ValueError: If token_mint is invalid or limit is out of range.
+
+        Example:
+            transactions = await client.get_token_transactions(
+                token_mint="EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                limit=500,
+                tx_type="SWAP"
+            )
+            # Returns list of swap transactions for this token
+
+        Note:
+            - Uses same Helius Enhanced Transactions API as get_wallet_transactions
+            - Includes retry logic (3 attempts) via BaseAPIClient
+            - Circuit breaker protection enabled
+            - Higher default limit (1000) suitable for token discovery
+        """
+        # Validate inputs
+        if not token_mint or len(token_mint) < 32:
+            msg = f"Invalid token mint address: {token_mint}"
+            raise ValueError(msg)
+
+        if limit < 1 or limit > 1000:
+            msg = f"Limit must be between 1 and 1000, got {limit}"
+            raise ValueError(msg)
+
+        # Build query parameters
+        params = {
+            "api-key": self.api_key,
+            "limit": str(limit),
+        }
+
+        if tx_type:
+            params["type"] = tx_type
+
+        # Build endpoint path (same endpoint, different address type)
+        path = f"/v0/addresses/{token_mint}/transactions"
+
+        log.info(
+            "fetching_token_transactions",
+            token_mint=token_mint[:8] + "...",
+            limit=limit,
+            tx_type=tx_type or "all",
+        )
+
+        try:
+            # Make request via BaseAPIClient (with retry + circuit breaker)
+            response = await self.get(path, params=params)
+            transactions = response.json()
+
+            # Response should be a list
+            if not isinstance(transactions, list):
+                log.error(
+                    "unexpected_helius_response_format",
+                    token_mint=token_mint[:8] + "...",
+                    response_type=type(transactions).__name__,
+                )
+                return []
+
+            log.info(
+                "token_transactions_fetched",
+                token_mint=token_mint[:8] + "...",
+                transaction_count=len(transactions),
+            )
+
+            return transactions
+
+        except ExternalServiceError as e:
+            log.error(
+                "helius_api_error",
+                token_mint=token_mint[:8] + "...",
+                error=str(e),
+                status_code=e.status_code,
+            )
+            raise
+
+        except Exception as e:
+            log.error(
+                "unexpected_error_fetching_transactions",
+                token_mint=token_mint[:8] + "...",
+                error=str(e),
+            )
+            raise ExternalServiceError(
+                service="Helius API",
+                message=f"Unexpected error: {e}",
+            ) from e
+
 
 # Global client instance (lazy initialization)
 _helius_client: HeliusClient | None = None

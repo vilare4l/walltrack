@@ -196,6 +196,8 @@ Weighted rule-based scoring:
 | Feedback Loop | Requires stable trading first | V2 |
 | Backtest Engine | Focus on forward simulation | V2 |
 | Behavioral Embeddings | Complexity not justified yet | V2 |
+| Position Size in Scoring | V1 calculates & displays only, complexity deferred | V2 |
+| Dynamic Exit Strategies | V1 uses fixed moonbag (50%@2x, 25%@3x), adapt per wallet style later | V2 |
 | Multi-chain | Solana focus first | V3 |
 
 ## User Journey
@@ -330,58 +332,74 @@ Helius Webhook → FastAPI → Signal Processing → Neo4j/Supabase Query
 - FR8: System can flag wallets for review when performance drops below threshold
 - FR9: Operator can manually blacklist specific wallets
 
-### Cluster Analysis
+### Watchlist Management
 
-- FR10: System can map wallet funding relationships (FUNDED_BY connections)
-- FR11: System can detect synchronized buying patterns (SYNCED_BUY within 5 min)
-- FR12: System can identify wallets appearing together on multiple early tokens
-- FR13: System can group related wallets into clusters
-- FR14: System can identify cluster leaders (wallets that initiate movements)
-- FR15: System can amplify signal score when multiple cluster wallets move together
+- FR10: System can evaluate profiled wallets against configurable criteria
+- FR11: System can automatically add wallets to watchlist if criteria met
+- FR12: System can mark wallets as 'ignored' if criteria not met
+- FR13: System can track wallet status lifecycle (discovered → profiled → watchlisted/ignored → flagged → removed)
+- FR14: Operator can configure watchlist criteria (win rate, PnL, trades count, decay threshold)
+- FR15: Operator can manually add/remove wallets from watchlist
+- FR16: Operator can blacklist wallets (permanent exclusion)
+
+### Cluster Analysis & Network Discovery
+
+- FR17: System can map wallet funding relationships (FUNDED_BY connections)
+- FR18: ~~System can detect synchronized buying patterns (SYNCED_BUY within 5 min)~~ **Out of scope V2** - Complexity not justified, FUNDED_BY sufficient
+- FR19: ~~System can identify wallets appearing together on multiple early tokens~~ **Out of scope V2** - Deferred to future version
+- FR20: System can group related wallets into clusters (watchlist only)
+- FR21: System can identify cluster leaders (wallets that initiate movements)
+- FR22: System can amplify signal score when multiple cluster wallets move together
+
+**Network Discovery (Epic 4):**
+- When wallet is watchlisted, system automatically discovers sibling wallets via funding relationships
+- Discovered wallets go through full profiling cycle (Stories 3.2-3.3) and watchlist evaluation (Story 3.5)
+- Configurable safeguards prevent discovery explosion (max_siblings_per_funder, min_funding_amount, max_network_size)
+- Network discovery can be enabled/disabled via configuration
 
 ### Signal Processing
 
-- FR16: System can receive real-time swap notifications via Helius webhooks
-- FR17: System can filter notifications to only monitored wallet addresses
-- FR18: System can calculate multi-factor signal score (wallet, cluster, token, context)
-- FR19: System can apply scoring threshold to determine trade eligibility
-- FR20: System can query token characteristics (age, market cap, liquidity)
-- FR21: System can log all signals regardless of score for analysis
+- FR23: System can receive real-time swap notifications via Helius webhooks
+- FR24: System can filter notifications to only monitored wallet addresses
+- FR25: System can calculate multi-factor signal score (wallet, cluster, token, context)
+- FR26: System can apply scoring threshold to determine trade eligibility
+- FR27: System can query token characteristics (age, market cap, liquidity)
+- FR28: System can log all signals regardless of score for analysis
 
 ### Position & Order Management
 
-- FR22: System can create positions from high-score signals
-- FR23: System can apply dynamic position sizing based on signal score
-- FR24: System can create entry orders with risk-based sizing
-- FR25: System can create exit orders per configured strategy
-- FR26: System can track all positions and orders with current status
-- FR27: System can execute orders in live mode via Jupiter API
-- FR28: System can skip execution in simulation mode (paper trading)
+- FR29: System can create positions from high-score signals
+- FR30: System can apply dynamic position sizing based on signal score
+- FR31: System can create entry orders with risk-based sizing
+- FR32: System can create exit orders per configured strategy
+- FR33: System can track all positions and orders with current status
+- FR34: System can execute orders in live mode via Jupiter API
+- FR35: System can skip execution in simulation mode (paper trading)
 
 ### Risk Management
 
-- FR29: System can pause all trading when drawdown exceeds threshold (20%)
-- FR30: System can reduce position size after consecutive losses
-- FR31: System can enforce maximum concurrent position limits
-- FR32: Operator can manually pause and resume trading
+- FR36: System can pause all trading when drawdown exceeds threshold (20%)
+- FR37: System can reduce position size after consecutive losses
+- FR38: System can enforce maximum concurrent position limits
+- FR39: Operator can manually pause and resume trading
 
 ### Operator Dashboard
 
-- FR33: Operator can configure risk parameters (capital allocation, position size, thresholds)
-- FR34: Operator can view system status (running, paused, health indicators)
-- FR35: Operator can view active positions and pending orders
-- FR36: Operator can view performance metrics (PnL, win rate, trade count)
-- FR37: Operator can view trade history with full details
-- FR38: Operator can receive alerts for circuit breakers and system issues
-- FR39: Operator can manage watchlist (add/remove wallets manually)
-- FR40: Operator can view wallet and cluster analysis details
-- FR41: Operator can switch between simulation and live mode
+- FR40: Operator can configure risk parameters (capital allocation, position size, thresholds)
+- FR41: Operator can view system status (running, paused, health indicators)
+- FR42: Operator can view active positions and pending orders
+- FR43: Operator can view performance metrics (PnL, win rate, trade count)
+- FR44: Operator can view trade history with full details
+- FR45: Operator can receive alerts for circuit breakers and system issues
+- FR46: Operator can manage watchlist (add/remove wallets manually)
+- FR47: Operator can view wallet and cluster analysis details
+- FR48: Operator can switch between simulation and live mode
 
 ### Trading Wallet Management
 
-- FR42: Operator can connect trading wallet to the system
-- FR43: Operator can view trading wallet balance (SOL and tokens)
-- FR44: System can validate wallet connectivity before trading
+- FR49: Operator can connect trading wallet to the system
+- FR50: Operator can view trading wallet balance (SOL and tokens)
+- FR51: System can validate wallet connectivity before trading
 
 ## Non-Functional Requirements
 

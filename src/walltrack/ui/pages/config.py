@@ -327,6 +327,231 @@ def _run_discovery_sync() -> str:
         return f"❌ Error: {e}"
 
 
+def _run_wallet_discovery_sync() -> str:
+    """Run wallet discovery (sync wrapper for Gradio handler).
+
+    Returns:
+        Status message string.
+    """
+    try:
+        from walltrack.core.discovery.wallet_discovery import (  # noqa: PLC0415
+            WalletDiscoveryService,
+        )
+
+        async def _async(supabase):
+            service = WalletDiscoveryService()
+            result = await service.run_wallet_discovery()
+
+            tokens_processed = result.get("tokens_processed", 0)
+            wallets_new = result.get("wallets_new", 0)
+            wallets_existing = result.get("wallets_existing", 0)
+            errors = result.get("errors", 0)
+
+            if errors > 0 and wallets_new == 0:
+                return f"❌ Error: {errors} errors encountered"
+
+            if tokens_processed == 0:
+                return "ℹ️ No tokens to discover wallets from (run token discovery first)"  # noqa: RUF001
+
+            if wallets_new > 0:
+                return (
+                    f"✅ Complete: {wallets_new} new wallets discovered "
+                    f"from {tokens_processed} tokens "
+                    f"({wallets_existing} already existed)"
+                )
+
+            return f"ℹ️ No new wallets found from {tokens_processed} tokens"  # noqa: RUF001
+
+        return run_async_with_client(_async)
+
+    except Exception as e:
+        log.error("wallet_discovery_failed", error=str(e))
+        return f"❌ Error: {e}"
+
+
+def _run_behavioral_profiling_sync() -> str:
+    """Run behavioral profiling for all wallets (sync wrapper for Gradio handler).
+
+    Profiles all wallets in database that have sufficient transaction history.
+    Story 3.3 - Manual trigger for batch profiling.
+
+    Returns:
+        Status message string with profiling results.
+    """
+    try:
+        from walltrack.core.behavioral.profiler import BehavioralProfiler  # noqa: PLC0415
+        from walltrack.data.supabase.repositories.config_repo import (  # noqa: PLC0415
+            ConfigRepository,
+        )
+        from walltrack.data.supabase.repositories.wallet_repo import (  # noqa: PLC0415
+            WalletRepository,
+        )
+        from walltrack.services.helius.client import HeliusClient  # noqa: PLC0415
+
+        async def _async(supabase):
+            helius_client = HeliusClient()
+            try:
+                # Get dependencies
+                config_repo = ConfigRepository(supabase)
+                wallet_repo = WalletRepository(supabase)
+                profiler = BehavioralProfiler(helius_client, config_repo)
+
+                # Get all wallets
+                wallets = await wallet_repo.get_all(limit=1000)
+
+                if not wallets:
+                    return "ℹ️ No wallets found in database"  # noqa: RUF001
+
+                # Profile each wallet
+                profiled_count = 0
+                skipped_count = 0
+                error_count = 0
+
+                for wallet in wallets:
+                    try:
+                        # Analyze wallet behavior
+                        profile = await profiler.analyze(wallet.wallet_address)
+
+                        # Skip if insufficient data (AC4 compliance)
+                        if profile is None:
+                            skipped_count += 1
+                            continue
+
+                        # Update wallet with behavioral data
+                        success = await wallet_repo.update_behavioral_profile(
+                            wallet_address=wallet.wallet_address,
+                            position_size_style=profile.position_size_style or "unknown",
+                            position_size_avg=float(profile.position_size_avg),
+                            hold_duration_avg=profile.hold_duration_avg,
+                            hold_duration_style=profile.hold_duration_style or "unknown",
+                            behavioral_confidence=profile.confidence,
+                        )
+
+                        if success:
+                            profiled_count += 1
+                        else:
+                            error_count += 1
+
+                    except Exception as e:
+                        log.warning(
+                            "wallet_profiling_failed",
+                            wallet_address=wallet.wallet_address[:8] + "...",
+                            error=str(e),
+                        )
+                        error_count += 1
+
+                # Build result message
+                total = len(wallets)
+                if profiled_count > 0:
+                    msg = f"✅ Profiled {profiled_count}/{total} wallets"
+                    if skipped_count > 0:
+                        msg += f" ({skipped_count} skipped - insufficient data)"
+                    if error_count > 0:
+                        msg += f" ({error_count} errors)"
+                    return msg
+                elif skipped_count > 0:
+                    return f"ℹ️ All {total} wallets have insufficient data (< 10 trades)"  # noqa: RUF001
+                else:
+                    return f"❌ Profiling failed for all {total} wallets"
+
+            finally:
+                await helius_client.close()
+
+        return run_async_with_client(_async)
+
+    except Exception as e:
+        log.error("behavioral_profiling_failed", error=str(e))
+        return f"❌ Error: {e}"
+
+
+def _run_decay_check_sync() -> str:
+    """Run decay detection for all wallets (sync wrapper for Gradio handler).
+
+    Checks all wallets for decay conditions (rolling window, consecutive losses, dormancy).
+    Story 3.4 - Manual trigger for batch decay detection.
+
+    Returns:
+        Status message string with decay check results.
+    """
+    try:
+        from walltrack.core.wallets.decay_detector import DecayConfig, DecayDetector  # noqa: PLC0415
+        from walltrack.data.supabase.repositories.config_repo import (  # noqa: PLC0415
+            ConfigRepository,
+        )
+        from walltrack.data.supabase.repositories.decay_event_repo import (  # noqa: PLC0415
+            DecayEventRepository,
+        )
+        from walltrack.data.supabase.repositories.wallet_repo import (  # noqa: PLC0415
+            WalletRepository,
+        )
+        from walltrack.services.helius.client import HeliusClient  # noqa: PLC0415
+
+        async def _async(supabase):
+            helius_client = HeliusClient()
+            try:
+                # Get dependencies
+                config_repo = ConfigRepository(supabase)
+                wallet_repo = WalletRepository(supabase)
+                event_repo = DecayEventRepository(supabase)
+
+                # Load decay configuration from database
+                decay_config = await DecayConfig.from_db(config_repo)
+                detector = DecayDetector(decay_config, wallet_repo, helius_client)
+
+                # Get all wallets
+                wallets = await wallet_repo.get_all(limit=1000)
+
+                if not wallets:
+                    return "ℹ️ No wallets found in database"  # noqa: RUF001
+
+                # Check each wallet for decay
+                checked_count = 0
+                event_count = 0
+                skipped_count = 0
+                error_count = 0
+
+                for wallet in wallets:
+                    try:
+                        # Check wallet for decay conditions
+                        event = await detector.check_wallet_decay(wallet.wallet_address)
+
+                        checked_count += 1
+
+                        # If decay event occurred, log it
+                        if event:
+                            await event_repo.create(event)
+                            event_count += 1
+
+                    except Exception as e:
+                        log.warning(
+                            "wallet_decay_check_failed",
+                            wallet_address=wallet.wallet_address[:8] + "...",
+                            error=str(e),
+                        )
+                        error_count += 1
+
+                # Build result message
+                total = len(wallets)
+                if checked_count > 0:
+                    msg = f"✅ Checked {checked_count}/{total} wallets"
+                    if event_count > 0:
+                        msg += f" ({event_count} decay events detected)"
+                    if error_count > 0:
+                        msg += f" ({error_count} errors)"
+                    return msg
+                else:
+                    return f"❌ Decay check failed for all {total} wallets"
+
+            finally:
+                await helius_client.close()
+
+        return run_async_with_client(_async)
+
+    except Exception as e:
+        log.error("decay_check_failed", error=str(e))
+        return f"❌ Error: {e}"
+
+
 def _get_initial_wallet_status() -> tuple[str, str, bool]:
     """Get initial wallet status for page load.
 
@@ -446,6 +671,85 @@ def render() -> None:
             ).then(
                 fn=_run_discovery_sync,
                 outputs=[discovery_status],
+            )
+
+            # Wallet Discovery Section (Story 3.1)
+            gr.Markdown("---")
+            gr.Markdown(
+                """
+                ### Wallet Discovery
+
+                Discover smart money wallets from token holders.
+                Requires tokens to be discovered first.
+                """
+            )
+
+            wallet_discovery_status = gr.Textbox(
+                value="Ready",
+                label="Status",
+                interactive=False,
+            )
+
+            run_wallet_discovery_btn = gr.Button("Run Wallet Discovery", variant="primary")
+
+            # Wire up wallet discovery button
+            run_wallet_discovery_btn.click(
+                fn=lambda: "🔄 Discovering wallets...",
+                outputs=[wallet_discovery_status],
+            ).then(
+                fn=_run_wallet_discovery_sync,
+                outputs=[wallet_discovery_status],
+            )
+
+            # Behavioral Profiling Section (Story 3.3)
+            gr.Markdown("---")
+            gr.Markdown("### Behavioral Profiling")
+            gr.Markdown(
+                "Analyze trading behavior patterns for all wallets. "
+                "Profiles position sizing and hold duration styles. "
+                "Requires minimum 10 trades per wallet."
+            )
+
+            profiling_status = gr.Textbox(
+                value="Ready",
+                label="Status",
+                interactive=False,
+            )
+
+            run_profiling_btn = gr.Button("Run Behavioral Profiling", variant="primary")
+
+            # Wire up profiling button
+            run_profiling_btn.click(
+                fn=lambda: "🔄 Profiling wallets...",
+                outputs=[profiling_status],
+            ).then(
+                fn=_run_behavioral_profiling_sync,
+                outputs=[profiling_status],
+            )
+
+            # Decay Detection Section (Story 3.4)
+            gr.Markdown("---")
+            gr.Markdown("### Wallet Decay Detection")
+            gr.Markdown(
+                "Check wallets for performance decay (low win rate, consecutive losses, dormancy). "
+                "Updates wallet status and generates decay events."
+            )
+
+            decay_check_status = gr.Textbox(
+                value="Ready",
+                label="Status",
+                interactive=False,
+            )
+
+            run_decay_check_btn = gr.Button("🔍 Check Wallet Decay", variant="primary")
+
+            # Wire up decay check button
+            run_decay_check_btn.click(
+                fn=lambda: "🔄 Checking wallets for decay...",
+                outputs=[decay_check_status],
+            ).then(
+                fn=_run_decay_check_sync,
+                outputs=[decay_check_status],
             )
 
             # Surveillance Schedule Section (Story 2.2)

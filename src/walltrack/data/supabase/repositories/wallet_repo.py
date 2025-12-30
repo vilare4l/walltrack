@@ -28,6 +28,7 @@ from datetime import UTC, datetime
 import structlog
 
 from walltrack.data.models.wallet import PerformanceMetrics, Wallet
+from walltrack.data.neo4j.queries import wallet as neo4j_wallet
 from walltrack.data.supabase.client import SupabaseClient
 
 log = structlog.get_logger(__name__)
@@ -264,6 +265,243 @@ class WalletRepository:
         except Exception as e:
             log.error(
                 "wallet_performance_metrics_update_failed",
+                wallet_address=wallet_address[:8] + "...",
+                error=str(e),
+            )
+            return False
+
+    async def update_behavioral_profile(
+        self,
+        wallet_address: str,
+        position_size_style: str,
+        position_size_avg: float,
+        hold_duration_avg: int,
+        hold_duration_style: str,
+        behavioral_confidence: str,
+    ) -> bool:
+        """Update wallet behavioral profiling fields.
+
+        Updates the behavioral profiling fields (position_size_style,
+        position_size_avg, hold_duration_avg, hold_duration_style,
+        behavioral_confidence, behavioral_last_updated) for the specified wallet.
+
+        Args:
+            wallet_address: Solana wallet address.
+            position_size_style: Position size classification (small, medium, large).
+            position_size_avg: Average position size in SOL.
+            hold_duration_avg: Average hold duration in seconds.
+            hold_duration_style: Hold duration classification (scalper, day_trader, etc.).
+            behavioral_confidence: Confidence level (unknown, low, medium, high).
+
+        Returns:
+            True if update successful, False otherwise.
+
+        Example:
+            success = await repo.update_behavioral_profile(
+                wallet_address="9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin",
+                position_size_style="medium",
+                position_size_avg=2.5,
+                hold_duration_avg=7200,
+                hold_duration_style="day_trader",
+                behavioral_confidence="medium",
+            )
+        """
+        try:
+            # Prepare update record
+            now = datetime.now(UTC).isoformat()
+            update_data = {
+                "position_size_style": position_size_style,
+                "position_size_avg": position_size_avg,
+                "hold_duration_avg": hold_duration_avg,
+                "hold_duration_style": hold_duration_style,
+                "behavioral_confidence": behavioral_confidence,
+                "behavioral_last_updated": now,
+                "updated_at": now,
+            }
+
+            # Execute update
+            await (
+                self._client.client.table(self.TABLE_NAME)
+                .update(update_data)
+                .eq("wallet_address", wallet_address)
+                .execute()
+            )
+
+            log.info(
+                "wallet_behavioral_profile_updated",
+                wallet_address=wallet_address[:8] + "...",
+                position_style=position_size_style,
+                hold_style=hold_duration_style,
+                confidence=behavioral_confidence,
+            )
+
+            return True
+
+        except Exception as e:
+            log.error(
+                "wallet_behavioral_profile_update_failed",
+                wallet_address=wallet_address[:8] + "...",
+                error=str(e),
+            )
+            return False
+
+    async def update_behavioral_profile_full(
+        self,
+        wallet_address: str,
+        position_size_style: str,
+        position_size_avg: float,
+        hold_duration_avg: int,
+        hold_duration_style: str,
+        behavioral_confidence: str,
+    ) -> bool:
+        """Update behavioral profile in both Supabase and Neo4j.
+
+        This is the integrated method that synchronizes behavioral profiling
+        data across both databases. It updates:
+        - Supabase: wallets table behavioral fields
+        - Neo4j: Wallet node behavioral properties
+
+        Args:
+            wallet_address: Solana wallet address.
+            position_size_style: Position size classification (small, medium, large).
+            position_size_avg: Average position size in SOL.
+            hold_duration_avg: Average hold duration in seconds.
+            hold_duration_style: Hold duration classification (scalper, day_trader, etc.).
+            behavioral_confidence: Confidence level (unknown, low, medium, high).
+
+        Returns:
+            True if both updates successful, False otherwise.
+
+        Note:
+            Updates are performed sequentially. If Supabase fails, Neo4j is not called.
+            If Neo4j fails, Supabase changes are already committed (not transactional).
+
+        Example:
+            success = await repo.update_behavioral_profile_full(
+                wallet_address="9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin",
+                position_size_style="medium",
+                position_size_avg=2.5,
+                hold_duration_avg=7200,
+                hold_duration_style="day_trader",
+                behavioral_confidence="medium",
+            )
+        """
+        # Step 1: Update Supabase
+        supabase_success = await self.update_behavioral_profile(
+            wallet_address=wallet_address,
+            position_size_style=position_size_style,
+            position_size_avg=position_size_avg,
+            hold_duration_avg=hold_duration_avg,
+            hold_duration_style=hold_duration_style,
+            behavioral_confidence=behavioral_confidence,
+        )
+
+        if not supabase_success:
+            log.error(
+                "behavioral_profile_full_update_failed_supabase",
+                wallet_address=wallet_address[:8] + "...",
+            )
+            return False
+
+        # Step 2: Update Neo4j
+        try:
+            await neo4j_wallet.update_wallet_behavioral_profile(
+                wallet_address=wallet_address,
+                position_size_style=position_size_style,
+                position_size_avg=position_size_avg,
+                hold_duration_avg=hold_duration_avg,
+                hold_duration_style=hold_duration_style,
+            )
+
+            log.info(
+                "behavioral_profile_full_update_complete",
+                wallet_address=wallet_address[:8] + "...",
+            )
+
+            return True
+
+        except Exception as e:
+            log.error(
+                "behavioral_profile_full_update_failed_neo4j",
+                wallet_address=wallet_address[:8] + "...",
+                error=str(e),
+            )
+            # Supabase is already updated, but Neo4j failed
+            return False
+
+    async def update_decay_status(
+        self,
+        wallet_address: str,
+        decay_status: str,
+        score: float,
+        rolling_win_rate: float | None,
+        consecutive_losses: int,
+        last_activity_date: datetime | None,
+    ) -> bool:
+        """Update wallet decay detection fields.
+
+        Updates decay_status, score, rolling_win_rate, consecutive_losses,
+        and last_activity_date for the specified wallet.
+
+        Args:
+            wallet_address: Solana wallet address.
+            decay_status: New decay status (ok, flagged, downgraded, dormant).
+            score: Updated wallet score (0.1 to 1.0).
+            rolling_win_rate: Win rate over most recent trades (0.0 to 1.0).
+            consecutive_losses: Number of consecutive losing trades.
+            last_activity_date: Date of last trading activity.
+
+        Returns:
+            True if update successful, False otherwise.
+
+        Example:
+            success = await repo.update_decay_status(
+                wallet_address="9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin",
+                decay_status="flagged",
+                score=0.68,
+                rolling_win_rate=0.35,
+                consecutive_losses=0,
+                last_activity_date=datetime.now(UTC),
+            )
+        """
+        try:
+            # Prepare update record
+            now = datetime.now(UTC).isoformat()
+            update_data = {
+                "decay_status": decay_status,
+                "score": score,
+                "rolling_win_rate": rolling_win_rate,
+                "consecutive_losses": consecutive_losses,
+                "last_activity_date": (
+                    last_activity_date.isoformat() if last_activity_date else None
+                ),
+                "updated_at": now,
+            }
+
+            # Execute update
+            await (
+                self._client.client.table(self.TABLE_NAME)
+                .update(update_data)
+                .eq("wallet_address", wallet_address)
+                .execute()
+            )
+
+            log.info(
+                "wallet_decay_status_updated",
+                wallet_address=wallet_address[:8] + "...",
+                decay_status=decay_status,
+                score=f"{score:.4f}",
+                rolling_win_rate=(
+                    f"{rolling_win_rate:.2%}" if rolling_win_rate is not None else "N/A"
+                ),
+                consecutive_losses=consecutive_losses,
+            )
+
+            return True
+
+        except Exception as e:
+            log.error(
+                "wallet_decay_status_update_failed",
                 wallet_address=wallet_address[:8] + "...",
                 error=str(e),
             )

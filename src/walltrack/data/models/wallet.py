@@ -5,6 +5,7 @@ All models use Pydantic BaseModel (not dataclass) per architecture rules.
 """
 
 from datetime import datetime
+from decimal import Decimal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -55,6 +56,15 @@ class Wallet(BaseModel):
         total_trades: Total number of trades analyzed (Story 3.2).
         metrics_last_updated: Last metrics calculation timestamp (Story 3.2).
         metrics_confidence: Metrics confidence level: unknown, low, medium, high (Story 3.2).
+        position_size_style: Position size classification: small, medium, large (Story 3.3).
+        position_size_avg: Average position size in SOL (Story 3.3).
+        hold_duration_avg: Average hold duration in seconds (Story 3.3).
+        hold_duration_style: Hold duration style: scalper, day_trader, swing_trader, position_trader (Story 3.3).
+        behavioral_last_updated: Last behavioral profiling timestamp (Story 3.3).
+        behavioral_confidence: Behavioral confidence: unknown, low, medium, high (Story 3.3).
+        consecutive_losses: Number of consecutive losing trades (Story 3.4).
+        last_activity_date: Last trade activity date for dormancy detection (Story 3.4).
+        rolling_win_rate: Win rate over most recent 20 trades (Story 3.4).
         created_at: Record creation timestamp.
         updated_at: Last modification timestamp.
 
@@ -91,6 +101,37 @@ class Wallet(BaseModel):
     )
     metrics_confidence: str = Field(
         default="unknown", description="Metrics confidence: unknown, low, medium, high"
+    )
+    # Behavioral profiling fields (Story 3.3)
+    position_size_style: str | None = Field(
+        default=None, description="Position size classification: small, medium, large"
+    )
+    position_size_avg: Decimal | None = Field(
+        default=None, description="Average position size in SOL"
+    )
+    hold_duration_avg: int | None = Field(
+        default=None, description="Average hold duration in seconds"
+    )
+    hold_duration_style: str | None = Field(
+        default=None,
+        description="Hold duration classification: scalper, day_trader, swing_trader, position_trader",
+    )
+    behavioral_last_updated: datetime | None = Field(
+        default=None, description="Last behavioral profiling timestamp"
+    )
+    behavioral_confidence: str = Field(
+        default="unknown",
+        description="Behavioral profiling confidence: unknown, low, medium, high",
+    )
+    # Decay detection fields (Story 3.4)
+    consecutive_losses: int = Field(
+        default=0, description="Number of consecutive losing trades (AC2)"
+    )
+    last_activity_date: datetime | None = Field(
+        default=None, description="Last trade activity date for dormancy detection (AC3)"
+    )
+    rolling_win_rate: Decimal | None = Field(
+        default=None, description="Win rate over most recent 20 trades (AC1)"
     )
     created_at: datetime | None = Field(default=None, description="Record creation timestamp")
     updated_at: datetime | None = Field(default=None, description="Last modification timestamp")
@@ -214,6 +255,106 @@ class Wallet(BaseModel):
         allowed = {"unknown", "low", "medium", "high"}
         if v not in allowed:
             msg = f"Invalid metrics_confidence: {v}. Must be one of {allowed}"
+            raise ValueError(msg)
+        return v
+
+    @field_validator("position_size_avg")
+    @classmethod
+    def validate_position_size_avg(cls, v: Decimal | None) -> Decimal | None:
+        """Validate position_size_avg is >= 0.
+
+        Args:
+            v: Decimal value to validate.
+
+        Returns:
+            Validated Decimal value.
+
+        Raises:
+            ValueError: If value is negative.
+        """
+        if v is not None and v < 0:
+            msg = f"Position size average must be >= 0, got {v}"
+            raise ValueError(msg)
+        return v
+
+    @field_validator("hold_duration_avg")
+    @classmethod
+    def validate_hold_duration_avg(cls, v: int | None) -> int | None:
+        """Validate hold_duration_avg is >= 0.
+
+        Args:
+            v: Integer value to validate.
+
+        Returns:
+            Validated integer value.
+
+        Raises:
+            ValueError: If value is negative.
+        """
+        if v is not None and v < 0:
+            msg = f"Hold duration average must be >= 0, got {v}"
+            raise ValueError(msg)
+        return v
+
+    @field_validator("position_size_style")
+    @classmethod
+    def validate_position_size_style(cls, v: str | None) -> str | None:
+        """Validate position_size_style is one of allowed values.
+
+        Args:
+            v: String value to validate.
+
+        Returns:
+            Validated string value.
+
+        Raises:
+            ValueError: If value is not in allowed values.
+        """
+        if v is not None:
+            allowed = {"small", "medium", "large"}
+            if v not in allowed:
+                msg = f"Invalid position_size_style: {v}. Must be one of {allowed}"
+                raise ValueError(msg)
+        return v
+
+    @field_validator("hold_duration_style")
+    @classmethod
+    def validate_hold_duration_style(cls, v: str | None) -> str | None:
+        """Validate hold_duration_style is one of allowed values.
+
+        Args:
+            v: String value to validate.
+
+        Returns:
+            Validated string value.
+
+        Raises:
+            ValueError: If value is not in allowed values.
+        """
+        if v is not None:
+            allowed = {"scalper", "day_trader", "swing_trader", "position_trader"}
+            if v not in allowed:
+                msg = f"Invalid hold_duration_style: {v}. Must be one of {allowed}"
+                raise ValueError(msg)
+        return v
+
+    @field_validator("behavioral_confidence")
+    @classmethod
+    def validate_behavioral_confidence(cls, v: str) -> str:
+        """Validate behavioral_confidence is one of allowed values.
+
+        Args:
+            v: String value to validate.
+
+        Returns:
+            Validated string value.
+
+        Raises:
+            ValueError: If value is not in allowed values.
+        """
+        allowed = {"unknown", "low", "medium", "high"}
+        if v not in allowed:
+            msg = f"Invalid behavioral_confidence: {v}. Must be one of {allowed}"
             raise ValueError(msg)
         return v
 

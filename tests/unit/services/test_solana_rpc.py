@@ -202,3 +202,110 @@ class TestSolanaRPCClientConfiguration:
 
             client = SolanaRPCClient()
             assert isinstance(client, BaseAPIClient)
+
+
+class TestSolanaRPCClientTokenAccounts:
+    """Tests for get_token_accounts method (Story 3.1)."""
+
+    @pytest.fixture
+    def mock_settings(self):
+        """Create mock settings with Solana RPC URL."""
+        settings = MagicMock()
+        settings.solana_rpc_url = "https://api.mainnet-beta.solana.com"
+        return settings
+
+    @pytest.fixture
+    def token_mint(self) -> str:
+        """Token mint address for testing."""
+        return "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"  # USDC
+
+    @pytest.mark.asyncio
+    async def test_get_token_accounts_success(self, mock_settings, token_mint):
+        """Should return list of wallet addresses holding the token."""
+        # Mock RPC response with 2 token holders
+        mock_response = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": [
+                {
+                    "pubkey": "TokenAccount1",
+                    "account": {
+                        "data": {
+                            "parsed": {
+                                "info": {
+                                    "owner": "WalletAddress1",
+                                    "tokenAmount": {"amount": "1000000"},
+                                }
+                            }
+                        }
+                    },
+                },
+                {
+                    "pubkey": "TokenAccount2",
+                    "account": {
+                        "data": {
+                            "parsed": {
+                                "info": {
+                                    "owner": "WalletAddress2",
+                                    "tokenAmount": {"amount": "500000"},
+                                }
+                            }
+                        }
+                    },
+                },
+            ],
+        }
+
+        with patch("walltrack.services.solana.rpc_client.get_settings", return_value=mock_settings):
+            from walltrack.services.solana.rpc_client import SolanaRPCClient
+
+            client = SolanaRPCClient()
+
+            with patch.object(client, "post", new_callable=AsyncMock) as mock_post:
+                mock_http_response = MagicMock()
+                mock_http_response.json.return_value = mock_response
+                mock_post.return_value = mock_http_response
+
+                result = await client.get_token_accounts(token_mint)
+
+                # Should return 2 wallet addresses
+                assert isinstance(result, list)
+                assert len(result) == 2
+                assert "WalletAddress1" in result
+                assert "WalletAddress2" in result
+
+    @pytest.mark.asyncio
+    async def test_get_token_accounts_empty(self, mock_settings, token_mint):
+        """Should return empty list when no holders found."""
+        mock_response = {"jsonrpc": "2.0", "id": 1, "result": []}
+
+        with patch("walltrack.services.solana.rpc_client.get_settings", return_value=mock_settings):
+            from walltrack.services.solana.rpc_client import SolanaRPCClient
+
+            client = SolanaRPCClient()
+
+            with patch.object(client, "post", new_callable=AsyncMock) as mock_post:
+                mock_http_response = MagicMock()
+                mock_http_response.json.return_value = mock_response
+                mock_post.return_value = mock_http_response
+
+                result = await client.get_token_accounts(token_mint)
+
+                assert isinstance(result, list)
+                assert len(result) == 0
+
+    @pytest.mark.asyncio
+    async def test_get_token_accounts_rpc_error(self, mock_settings, token_mint):
+        """Should handle RPC errors gracefully."""
+        with patch("walltrack.services.solana.rpc_client.get_settings", return_value=mock_settings):
+            from walltrack.services.solana.rpc_client import SolanaRPCClient
+
+            client = SolanaRPCClient()
+
+            with patch.object(client, "post", new_callable=AsyncMock) as mock_post:
+                mock_post.side_effect = httpx.TimeoutException("RPC timeout")
+
+                with pytest.raises(Exception) as exc_info:
+                    await client.get_token_accounts(token_mint)
+
+                assert "timeout" in str(exc_info.value).lower()

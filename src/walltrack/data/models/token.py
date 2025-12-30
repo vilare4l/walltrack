@@ -52,6 +52,9 @@ class Token(BaseModel):
     created_at: datetime | None = Field(default=None, description="Record creation timestamp")
     updated_at: datetime | None = Field(default=None, description="Last modification timestamp")
     last_checked: datetime | None = Field(default=None, description="Last API refresh timestamp")
+    wallets_discovered: bool = Field(
+        default=False, description="Whether wallets have been discovered from this token (Story 3.1)"
+    )
 
 
 class TokenDiscoveryResult(BaseModel):

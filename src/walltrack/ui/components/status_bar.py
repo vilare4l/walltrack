@@ -88,6 +88,28 @@ def get_token_count() -> int:
         return 0
 
 
+def get_wallet_count() -> int:
+    """Get total discovered wallet count for status bar display.
+
+    Returns:
+        Total number of wallets in database, 0 on error.
+    """
+    try:
+        from walltrack.data.repositories.wallet_repository import (  # noqa: PLC0415
+            WalletRepository,
+        )
+
+        async def _get(client):
+            repo = WalletRepository(supabase_client=client.client)
+            wallets = await repo.list_wallets(limit=10000)  # Get all for count
+            return len(wallets)
+
+        return run_async_with_client(_get)
+    except Exception as e:
+        log.debug("status_bar_wallet_count_failed", error=str(e))
+        return 0
+
+
 def get_discovery_status() -> tuple[str, str]:
     """Get discovery status for status bar display.
 
@@ -200,12 +222,19 @@ def render_status_html() -> str:
     # Green if has tokens, Yellow if none
     discovery_icon = "\U0001F7E2" if token_count > 0 else "\U0001F7E1"
 
+    # Wallet count (Story 3.1)
+    wallet_count = get_wallet_count()
+    # Green if has wallets, Yellow if none
+    wallets_icon = "\U0001F7E2" if wallet_count > 0 else "\U0001F7E1"
+
     # Use CSS classes from tokens.css - no inline styles needed
     return f"""
     <div id="status-bar">
         <span>{mode_icon} <strong>{mode}</strong></span>
         <span>{health_icon} System: {status.get('status', 'unknown')}</span>
         <span>{wallet_icon} {wallet_text}</span>
+        <span>{discovery_icon} Tokens: {token_count}</span>
+        <span>{wallets_icon} Wallets: {wallet_count}</span>
         <span>{discovery_icon} Discovery: {last_discovery} (next: {next_run})</span>
         <span>\U0001F7E2 Signals: 0 today</span>
     </div>

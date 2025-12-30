@@ -390,6 +390,7 @@ walltrack/
 │       │   ├── wallets/         # Wallet Intelligence
 │       │   │   ├── __init__.py
 │       │   │   ├── profiler.py
+│       │   │   ├── watchlist.py      # Watchlist evaluation & management
 │       │   │   ├── decay_detector.py
 │       │   │   └── blacklist.py
 │       │   │
@@ -556,6 +557,162 @@ External Request
 └───────┘ └──────────┘
 ```
 
+### Watchlist Management & Worker Pattern
+
+**Purpose:** Filter smart money wallets from noise using configurable quality criteria. All downstream workers (clustering, decay detection, signal scoring) operate ONLY on watchlisted wallets.
+
+**Wallet Status Lifecycle:**
+```
+                        ┌─→ ignored (criteria not met)
+                        │
+discovered → profiled ──┤
+                        │
+                        └─→ watchlisted → flagged → removed
+                              ↓
+                          blacklisted (manual)
+```
+
+**Status-Based Filtering Pattern:**
+
+All expensive operations filter on `wallet_status = 'watchlisted'`:
+
+```python
+# Clustering Worker (Epic 4)
+async def run_clustering_job():
+    """Worker qui clustérise uniquement les wallets watchlistés."""
+    wallets = await wallet_repo.get_all(
+        where={'wallet_status': 'watchlisted'}
+    )
+    for wallet in wallets:
+        await cluster_service.analyze_relationships(wallet.id)
+
+# Decay Detection Worker (Story 3.4)
+async def run_decay_detection_job():
+    """Worker qui surveille uniquement les wallets watchlistés."""
+    wallets = await wallet_repo.get_all(
+        where={'wallet_status': 'watchlisted'}
+    )
+    for wallet in wallets:
+        decay_score = await calculate_decay_score(wallet.id)
+        if decay_score > threshold:
+            wallet.wallet_status = 'flagged'
+            await wallet_repo.update(wallet)
+```
+
+**Configuration-Driven Criteria:**
+
+Watchlist evaluation uses dynamic config from `walltrack.config` table:
+- `watchlist_min_winrate` (default: 0.70)
+- `watchlist_min_pnl` (default: 0.0 SOL)
+- `watchlist_min_trades` (default: 10)
+- `watchlist_max_decay_score` (default: 0.30)
+
+**Performance Impact:**
+- **Before**: Clustering on 10,000+ wallets
+- **After**: Clustering on ~100-500 watchlisted wallets
+- **Gain**: 20-100x performance improvement on Neo4j queries
+
+**Implementation Flow:**
+1. Wallet profiling completes → `wallet_status = 'profiled'`
+2. Auto-trigger watchlist evaluation (`core/wallets/watchlist.py`)
+3. Evaluate against config criteria
+4. If met → `wallet_status = 'watchlisted'`, store reason as JSON
+5. If not met → `wallet_status = 'ignored'`
+6. All workers filter on watchlist status before expensive operations
+
+---
+
+### Network Discovery & FUNDED_BY Relationships (Epic 4)
+
+**Purpose:** Automatically expand watchlist by discovering wallet networks via funding relationships. When a wallet is watchlisted, discover sibling wallets funded by the same source.
+
+**Trigger:** Wallet status change → 'watchlisted'
+
+**Discovery Flow:**
+
+```python
+async def on_wallet_watchlisted(wallet_id: str):
+    """Triggered when wallet passes watchlist criteria."""
+    if not config.network_discovery_enabled:
+        return
+
+    # 1. Find funder(s) - qui a financé ce wallet ?
+    funders = await helius_client.get_funding_sources(wallet_id)
+
+    for funder in funders:
+        # Filter: minimum contribution
+        if funder['amount'] < config.min_funder_contribution:
+            continue
+
+        # 2. Find siblings - autres wallets financés par le même funder
+        siblings = await helius_client.get_funding_targets(funder['address'])
+
+        # Apply safeguards
+        siblings = [s for s in siblings if s['amount'] >= config.min_funding_amount]
+        siblings = siblings[:config.max_siblings_per_funder]
+
+        for sibling in siblings:
+            if exists_in_db(sibling['address']):
+                continue
+
+            # 3. Add to DB + full profiling cycle
+            wallet = create_wallet(sibling['address'], status='discovered')
+            await wallet_profiler.profile(wallet.id)           # Story 3.2
+            await behavioral_profiler.analyze(wallet.id)        # Story 3.3
+            await watchlist_evaluator.evaluate(wallet.id)       # Story 3.5
+            # → Si qualifié: wallet_status = 'watchlisted'
+```
+
+**Configuration Parameters:**
+
+Network discovery uses `network_discovery` category in config table:
+
+| Parameter | Default | Purpose |
+|-----------|---------|---------|
+| `enabled` | `true` | Enable/disable network discovery |
+| `max_siblings_per_funder` | `50` | Limit wallets per funder (prevent explosion) |
+| `min_funding_amount` | `1.0 SOL` | Filter micro-transactions |
+| `max_network_size` | `100` | Total wallets per session (circuit breaker) |
+| `min_funder_contribution` | `5.0 SOL` | Minimum funder amount to trigger discovery |
+
+**Safeguards:**
+
+1. **Circuit Breakers:**
+   - Stop if `discovered_count >= max_network_size`
+   - Skip funder if `sibling_count > max_siblings_per_funder`
+
+2. **Duplicate Prevention:**
+   - Check `wallet_repo.get_by_address()` before creating
+   - No recursion - only 1-hop discovery (funder → siblings)
+
+3. **Quality Filter:**
+   - All discovered wallets go through watchlist evaluation
+   - Only qualified wallets (criteria met) join watchlist
+   - Failed wallets → `status='ignored'`
+
+**Neo4j Relationships:**
+
+FUNDED_BY edges created after discovery:
+
+```cypher
+CREATE (wallet:Wallet {address: $wallet_addr})
+       -[:FUNDED_BY {amount: $amount, timestamp: $ts}]->
+       (funder:Wallet {address: $funder_addr})
+```
+
+**Performance:**
+- Discovery runs async (non-blocking)
+- Profiling is the bottleneck (1 Helius call per wallet)
+- 50 siblings × 1 API call = ~5-10 seconds per watchlisted wallet
+
+**V2 Simplification:**
+- ✅ FUNDED_BY relationships only
+- ❌ No SYNCED_BUY detection (out of scope - complexity not justified)
+- ❌ No TRADES_WITH (out of scope - deferred to future version)
+- Focus: Organizational structure via funding, not synchronized trading patterns
+
+---
+
 ### Requirements to Structure Mapping
 
 | Build Step | Primary Module | Data Layer |
@@ -563,11 +720,13 @@ External Request
 | 1. Discovery tokens | `core/discovery/` | `tokens` (Supabase) |
 | 2. Surveillance | `scheduler/`, `services/dexscreener/` | `tokens.last_checked` |
 | 3. Discovery wallets | `core/discovery/`, `services/helius/` | `wallets`, `Wallet` (Neo4j) |
-| 4. Profiling + Clustering | `core/wallets/`, `core/cluster/` | `wallets`, Neo4j edges |
-| 5. Webhooks Helius | `api/webhooks/`, `services/helius/` | `webhooks` |
-| 6. Scoring signals | `core/scoring/` | `signals` |
-| 7. Positions | `core/positions/` | `positions`, `trades` |
-| 8. Orders | `core/execution/`, `services/jupiter/` | `orders` |
+| 4. Profiling | `core/wallets/profiler.py` | `wallets.win_rate`, `wallets.behavioral_*` |
+| 5. Watchlist Management | `core/wallets/watchlist.py` | `wallets.wallet_status`, `config` |
+| 6. Clustering | `core/cluster/` | Neo4j edges, `wallets` (watchlist only) |
+| 7. Webhooks Helius | `api/webhooks/`, `services/helius/` | `webhooks` |
+| 8. Scoring signals | `core/scoring/` | `signals` |
+| 9. Positions | `core/positions/` | `positions`, `trades` |
+| 10. Orders | `core/execution/`, `services/jupiter/` | `orders` |
 
 ### File Count Summary
 

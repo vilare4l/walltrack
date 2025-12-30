@@ -264,3 +264,57 @@ class TokenRepository:
         except Exception as e:
             log.warning("token_delete_failed", mint=mint, error=str(e))
             return False
+
+    async def get_undiscovered_tokens(self) -> list[Token]:
+        """Get all tokens where wallets haven't been discovered yet.
+
+        Returns tokens where wallets_discovered = False for wallet discovery processing.
+
+        Returns:
+            List of Token objects where wallets_discovered is False.
+            Empty list if none found or error.
+        """
+        try:
+            response = await (
+                self._client.client.table(self.TABLE_NAME)
+                .select("*")
+                .eq("wallets_discovered", False)
+                .execute()
+            )
+
+            tokens = [Token(**token_data) for token_data in response.data]
+            log.info("undiscovered_tokens_fetched", count=len(tokens))
+            return tokens
+
+        except Exception as e:
+            log.warning("get_undiscovered_tokens_failed", error=str(e))
+            return []
+
+    async def mark_wallets_discovered(self, mint: str) -> bool:
+        """Mark a token as having wallets discovered.
+
+        Updates wallets_discovered flag to TRUE for the given token.
+
+        Args:
+            mint: Solana token mint address.
+
+        Returns:
+            True if updated successfully, False otherwise.
+        """
+        try:
+            await (
+                self._client.client.table(self.TABLE_NAME)
+                .update({"wallets_discovered": True})
+                .eq("mint", mint)
+                .execute()
+            )
+            log.info("token_marked_wallets_discovered", mint=mint[:8] + "...")
+            return True
+
+        except Exception as e:
+            log.warning(
+                "mark_wallets_discovered_failed",
+                mint=mint[:8] + "...",
+                error=str(e),
+            )
+            return False

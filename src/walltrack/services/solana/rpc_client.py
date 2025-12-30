@@ -122,3 +122,108 @@ class SolanaRPCClient(BaseAPIClient):
         """
         account_info = await self.get_account_info(address)
         return account_info is not None
+
+    async def get_token_accounts(
+        self, token_mint: str, limit: int = 100
+    ) -> list[str]:
+        """Get token holder wallet addresses via getProgramAccounts RPC.
+
+        Discovers wallet addresses holding a specific SPL token by querying
+        the Token Program for all token accounts associated with the mint.
+
+        Args:
+            token_mint: Token mint address (base58 format).
+            limit: Maximum number of token accounts to return (default 100).
+
+        Returns:
+            List of wallet addresses (owners of token accounts) with non-zero balance.
+            Returns empty list if no holders found.
+
+        Raises:
+            WalletConnectionError: If RPC call fails after retries.
+
+        Note:
+            Uses Solana RPC getProgramAccounts with:
+            - Token Program ID: TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA
+            - Filter: token mint address + jsonParsed encoding
+            - Returns only accounts with balance > 0
+        """
+        # Token Program ID (SPL Token Program)
+        token_program_id = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getProgramAccounts",
+            "params": [
+                token_program_id,
+                {
+                    "encoding": "jsonParsed",
+                    "filters": [
+                        {"dataSize": 165},  # Token account size
+                        {
+                            "memcmp": {
+                                "offset": 0,
+                                "bytes": token_mint,  # Filter by mint address
+                            }
+                        },
+                    ],
+                },
+            ],
+        }
+
+        log.debug(
+            "solana_get_token_accounts",
+            token_mint=token_mint[:8] + "...",
+            limit=limit,
+        )
+
+        try:
+            response = await self.post("", json=payload)
+            data = response.json()
+
+            result = data.get("result", [])
+            if not result:
+                log.debug(
+                    "solana_no_token_holders_found",
+                    token_mint=token_mint[:8] + "...",
+                )
+                return []
+
+            # Extract owner addresses from parsed token account data
+            wallet_addresses = []
+            for account in result[:limit]:  # Respect limit
+                try:
+                    parsed_info = account["account"]["data"]["parsed"]["info"]
+                    owner = parsed_info.get("owner")
+                    token_amount = parsed_info.get("tokenAmount", {})
+                    amount = int(token_amount.get("amount", "0"))
+
+                    # Only include accounts with non-zero balance
+                    if owner and amount > 0:
+                        wallet_addresses.append(owner)
+                except (KeyError, ValueError) as e:
+                    log.warning(
+                        "solana_token_account_parse_error",
+                        account_pubkey=account.get("pubkey", "unknown"),
+                        error=str(e),
+                    )
+                    continue
+
+            log.info(
+                "solana_token_accounts_retrieved",
+                token_mint=token_mint[:8] + "...",
+                holders_count=len(wallet_addresses),
+            )
+            return wallet_addresses
+
+        except Exception as e:
+            log.error(
+                "solana_get_token_accounts_failed",
+                token_mint=token_mint[:8] + "...",
+                error=str(e),
+            )
+            raise WalletConnectionError(
+                f"Failed to get token accounts: {e}",
+                wallet_address=token_mint,
+            ) from e

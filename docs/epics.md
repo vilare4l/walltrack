@@ -33,60 +33,70 @@ This document provides the complete epic and story breakdown for WallTrack, deco
 - FR8: System can flag wallets for review when performance drops below threshold
 - FR9: Operator can manually blacklist specific wallets
 
+**Watchlist Management (7 FRs)**
+
+- FR10: System can evaluate profiled wallets against configurable criteria
+- FR11: System can automatically add wallets to watchlist if criteria met
+- FR12: System can mark wallets as 'ignored' if criteria not met
+- FR13: System can track wallet status lifecycle (discovered → profiled → watchlisted/ignored → flagged → removed)
+- FR14: Operator can configure watchlist criteria (win rate, PnL, trades count, decay threshold)
+- FR15: Operator can manually add/remove wallets from watchlist
+- FR16: Operator can blacklist wallets (permanent exclusion)
+
 **Cluster Analysis (6 FRs)**
 
-- FR10: System can map wallet funding relationships (FUNDED_BY connections)
-- FR11: System can detect synchronized buying patterns (SYNCED_BUY within 5 min)
-- FR12: System can identify wallets appearing together on multiple early tokens
-- FR13: System can group related wallets into clusters
-- FR14: System can identify cluster leaders (wallets that initiate movements)
-- FR15: System can amplify signal score when multiple cluster wallets move together
+- FR17: System can map wallet funding relationships (FUNDED_BY connections)
+- FR18: System can detect synchronized buying patterns (SYNCED_BUY within 5 min)
+- FR19: System can identify wallets appearing together on multiple early tokens
+- FR20: System can group related wallets into clusters (watchlist only)
+- FR21: System can identify cluster leaders (wallets that initiate movements)
+- FR22: System can amplify signal score when multiple cluster wallets move together
 
 **Signal Processing (6 FRs)**
 
-- FR16: System can receive real-time swap notifications via Helius webhooks
-- FR17: System can filter notifications to only monitored wallet addresses
-- FR18: System can calculate multi-factor signal score (wallet, cluster, token, context)
-- FR19: System can apply scoring threshold to determine trade eligibility
-- FR20: System can query token characteristics (age, market cap, liquidity)
-- FR21: System can log all signals regardless of score for analysis
+- FR23: System can receive real-time swap notifications via Helius webhooks
+- FR24: System can filter notifications to only monitored wallet addresses
+- FR25: System can calculate multi-factor signal score (wallet, cluster, token, context)
+- FR26: System can apply scoring threshold to determine trade eligibility
+- FR27: System can query token characteristics (age, market cap, liquidity)
+- FR28: System can log all signals regardless of score for analysis
 
 **Position & Order Management (7 FRs)**
 
-- FR22: System can create positions from high-score signals
-- FR23: System can apply dynamic position sizing based on signal score
-- FR24: System can create entry orders with risk-based sizing
-- FR25: System can create exit orders per configured strategy
-- FR26: System can track all positions and orders with current status
-- FR27: System can execute orders in live mode via Jupiter API
-- FR28: System can skip execution in simulation mode (paper trading)
+- FR29: System can create positions from high-score signals
+- FR30: System can apply dynamic position sizing based on signal score
+- FR31: System can create entry orders with risk-based sizing
+- FR32: System can create exit orders per configured strategy
+- FR33: System can track all positions and orders with current status
+- FR34: System can execute orders in live mode via Jupiter API
+- FR35: System can skip execution in simulation mode (paper trading)
 
 **Risk Management (4 FRs)**
 
-- FR29: System can pause all trading when drawdown exceeds threshold (20%)
-- FR30: System can reduce position size after consecutive losses
-- FR31: System can enforce maximum concurrent position limits
-- FR32: Operator can manually pause and resume trading
+- FR36: System can pause all trading when drawdown exceeds threshold (20%)
+- FR37: System can reduce position size after consecutive losses
+- FR38: System can enforce maximum concurrent position limits
+- FR39: Operator can manually pause and resume trading
 
 **Operator Dashboard (9 FRs)**
 
-- FR33: Operator can configure risk parameters (capital allocation, position size, thresholds)
-- FR34: Operator can view system status (running, paused, health indicators)
-- FR35: Operator can view active positions and pending orders
-- FR36: Operator can view performance metrics (PnL, win rate, trade count)
-- FR37: Operator can view trade history with full details
-- FR38: Operator can receive alerts for circuit breakers and system issues
-- FR39: Operator can manage watchlist (add/remove wallets manually)
-- FR40: Operator can view wallet and cluster analysis details
-- FR41: Operator can switch between simulation and live mode
+- FR40: Operator can configure risk parameters (capital allocation, position size, thresholds)
+- FR41: Operator can view system status (running, paused, health indicators)
+- FR42: Operator can view active positions and pending orders
+- FR43: Operator can view performance metrics (PnL, win rate, trade count)
+- FR44: Operator can view trade history with full details
+- FR45: Operator can receive alerts for circuit breakers and system issues
+- FR46: Operator can manage watchlist (add/remove wallets manually)
+- FR47: Operator can view wallet and cluster analysis details
+- FR48: Operator can switch between simulation and live mode
 
 **Trading Wallet Management (3 FRs)**
 
-- FR42: Operator can connect trading wallet to the system
-- FR43: Operator can view trading wallet balance (SOL and tokens)
-- FR44: System can validate wallet connectivity before trading
+- FR49: Operator can connect trading wallet to the system
+- FR50: Operator can view trading wallet balance (SOL and tokens)
+- FR51: System can validate wallet connectivity before trading
 
-**Total: 44 Functional Requirements**
+**Total: 51 Functional Requirements**
 
 ### Non-Functional Requirements
 
@@ -163,30 +173,37 @@ This document provides the complete epic and story breakdown for WallTrack, deco
 | FR7 | Epic 3 | Decay detection |
 | FR8 | Epic 3 | Flag wallets for review |
 | FR9 | Epic 3 | Manual blacklist |
-| FR10 | Epic 4 | FUNDED_BY relationships |
-| FR11 | Epic 4 | SYNCED_BUY detection |
-| FR12 | Epic 4 | Co-appearance detection |
-| FR13 | Epic 4 | Cluster grouping |
-| FR14 | Epic 4 | Leader identification |
-| FR15 | Epic 4 | Score amplification |
-| FR16 | Epic 5 | Webhook reception |
-| FR17 | Epic 5 | Wallet filtering |
-| FR18 | Epic 5 | Multi-factor scoring |
-| FR19 | Epic 5 | Threshold application |
-| FR20 | Epic 5 | Token characteristics |
-| FR21 | Epic 5 | Signal logging |
-| FR22 | Epic 6 | Position creation |
-| FR23 | Epic 6 | Dynamic sizing |
-| FR24 | Epic 6 | Entry orders |
-| FR25 | Epic 6 | Exit orders |
-| FR26 | Epic 6 | Status tracking |
-| FR27 | Epic 8 | Live execution |
-| FR28 | Epic 6 | Simulation mode |
-| FR29 | Epic 7 | Drawdown pause |
-| FR30 | Epic 7 | Size reduction |
-| FR31 | Epic 7 | Position limits |
-| FR32 | Epic 7 | Manual pause/resume |
-| FR33 | Epic 7 | Risk config |
+| FR10 | Epic 3 | Evaluate wallets against criteria |
+| FR11 | Epic 3 | Auto-add to watchlist |
+| FR12 | Epic 3 | Mark as ignored |
+| FR13 | Epic 3 | Track wallet status lifecycle |
+| FR14 | Epic 3 | Configure watchlist criteria |
+| FR15 | Epic 3 | Manual watchlist add/remove |
+| FR16 | Epic 3 | Blacklist wallets |
+| FR17 | Epic 4 | FUNDED_BY relationships |
+| FR18 | Epic 4 | SYNCED_BUY detection (OUT OF SCOPE V2) |
+| FR19 | Epic 4 | Co-appearance detection (OUT OF SCOPE V2) |
+| FR20 | Epic 4 | Cluster grouping (watchlist only) |
+| FR21 | Epic 4 | Leader identification |
+| FR22 | Epic 4 | Score amplification |
+| FR23 | Epic 5 | Webhook reception |
+| FR24 | Epic 5 | Wallet filtering |
+| FR25 | Epic 5 | Multi-factor scoring |
+| FR26 | Epic 5 | Threshold application |
+| FR27 | Epic 5 | Token characteristics |
+| FR28 | Epic 5 | Signal logging |
+| FR29 | Epic 6 | Position creation |
+| FR30 | Epic 6 | Dynamic sizing |
+| FR31 | Epic 6 | Entry orders |
+| FR32 | Epic 6 | Exit orders |
+| FR33 | Epic 6 | Status tracking |
+| FR34 | Epic 8 | Live execution |
+| FR35 | Epic 6 | Simulation mode |
+| FR36 | Epic 7 | Drawdown pause |
+| FR37 | Epic 7 | Size reduction |
+| FR38 | Epic 7 | Position limits |
+| FR39 | Epic 7 | Manual pause/resume |
+| FR40 | Epic 7 | Risk config |
 | FR34 | Epic 1 | System status |
 | FR35 | Epic 6 | View positions |
 | FR36 | Epic 8 | Performance metrics |
@@ -436,11 +453,13 @@ So that I can validate token discovery before building wallet features.
 
 ---
 
-### Epic 3: Wallet Discovery & Profiling
+### Epic 3: Wallet Intelligence & Watchlist Management
 
-**User Outcome:** Operator can see wallets extracted from tokens with profiles, decay status, and blacklist capability.
+**User Outcome:** Operator can see wallets extracted from tokens with profiles, watchlist status, decay detection, and manual blacklist capability. Watchlist system filters smart money from noise using configurable criteria.
 
-**FRs covered:** FR4, FR5, FR6, FR7, FR8, FR9, FR39
+**FRs covered:** FR4, FR5, FR6, FR7, FR8, FR9, FR10-FR16
+
+**Key Change:** Story 3.5 (Auto Watchlist Management) establishes status-based filtering pattern for all downstream workers (clustering, decay detection, signal scoring).
 
 #### Story 3.1: Wallet Discovery from Tokens
 
@@ -576,67 +595,70 @@ So that I can validate wallet profiling before building cluster analysis.
 
 ---
 
-### Epic 4: Cluster Analysis
+### Epic 4: Network Discovery & Clustering (FUNDED_BY Only)
 
-**User Outcome:** Operator can see wallet relationships, clusters, and leaders in Neo4j visualization.
+**User Outcome:** Operator can discover wallet networks via funding relationships, see clusters for watchlisted wallets, and identify leaders.
 
-**FRs covered:** FR10, FR11, FR12, FR13, FR14, FR15, FR40
+**FRs covered:** FR17, FR20, FR21, FR22, FR47
 
-#### Story 4.1: Wallet Funding Relationships
+**Key Architectural Pattern:**
+- Network Discovery: When wallet is watchlisted, discover siblings via funders → profile → watchlist eval
+- Clustering: All Neo4j queries filter on `wallet_status = 'watchlisted'` (20-100x performance gain)
+- Relationships: FUNDED_BY only (V2 simplification - no SYNCED_BUY/TRADES_WITH)
+
+**Configuration:** Network discovery parameters in config table (enabled, max_siblings_per_funder, min_funding_amount, max_network_size, min_funder_contribution)
+
+#### Story 4.1: Network Discovery from Funders
 
 As an operator,
-I want to see wallet funding relationships,
-So that I can identify connected wallets.
+I want new wallets discovered via funding relationships when a wallet is watchlisted,
+So that I can expand my watchlist with related high-quality wallets.
 
 **Acceptance Criteria:**
 
-**Given** wallet transaction history
+**Given** a wallet transitions to 'watchlisted' status
+**When** network discovery triggers (configurable in config table)
+**Then** funder(s) are identified via Helius funding sources API
+**And** other wallets funded by same funder(s) are discovered (siblings)
+
+**Given** sibling wallets discovered
+**When** discovery completes
+**Then** new wallets are added to database with status='discovered'
+**And** full profiling cycle runs (Stories 3.2-3.3)
+**And** watchlist evaluation runs (Story 3.5)
+**And** qualified wallets become status='watchlisted'
+
+**Given** config parameters (network_discovery category)
+**When** discovery runs
+**Then** safeguards apply: max_siblings_per_funder, min_funding_amount, max_network_size, min_funder_contribution
+**And** discovery stops if circuit breakers hit
+
+**Given** Config → Network Discovery section
+**When** I view settings
+**Then** I see all parameters with current values
+**And** can enable/disable discovery
+**And** can adjust thresholds
+
+#### Story 4.2: Wallet Funding Relationships (FUNDED_BY)
+
+As an operator,
+I want to see wallet funding relationships in Neo4j,
+So that I can understand wallet organizational structure.
+
+**Acceptance Criteria:**
+
+**Given** watchlisted wallet (from Story 3.5 or Story 4.1)
 **When** funding analysis runs
 **Then** FUNDED_BY edges are created in Neo4j
-**And** relationships show source → destination with amount
+**And** relationships show source → destination with funding amount
 
 **Given** a wallet with funding relationships
-**When** I view it in sidebar
+**When** I view it in sidebar (Explorer)
 **Then** I see "Funded by" section with linked wallets
 **And** can click to navigate to funding wallet
+**And** relationship strength (funding amount) is visible
 
-#### Story 4.2: Synchronized Buying Detection
-
-As an operator,
-I want to detect wallets buying together,
-So that I can identify coordinated groups.
-
-**Acceptance Criteria:**
-
-**Given** multiple wallets buying same token
-**When** purchases occur within 5 minutes of each other
-**Then** SYNCED_BUY edges are created in Neo4j
-**And** sync count is tracked per wallet pair
-
-**Given** wallets with sync patterns
-**When** I view cluster analysis
-**Then** synchronized pairs are highlighted
-**And** frequency of syncs is displayed
-
-#### Story 4.3: Co-appearance Detection
-
-As an operator,
-I want to identify wallets appearing together on early tokens,
-So that I can spot insider groups.
-
-**Acceptance Criteria:**
-
-**Given** wallet transaction history across tokens
-**When** co-appearance analysis runs
-**Then** wallets appearing together on 3+ early tokens are flagged
-**And** co-appearance score is calculated
-
-**Given** wallets with high co-appearance
-**When** I view them in Explorer
-**Then** they show "Frequent co-buyer" indicator
-**And** relationship strength is visible
-
-#### Story 4.4: Cluster Grouping & Leaders
+#### Story 4.3: Cluster Grouping & Leaders
 
 As an operator,
 I want wallets grouped into clusters with leaders identified,
@@ -659,7 +681,7 @@ So that I can follow the most influential wallets.
 **Then** I see table with: Cluster ID, Leader, Member Count, Avg Score
 **And** can click to see all members
 
-#### Story 4.5: Cluster Drill-down & Score Amplification
+#### Story 4.4: Cluster Drill-down & Score Amplification
 
 As an operator,
 I want to see cluster details and understand score amplification,
@@ -674,7 +696,7 @@ So that I know why certain signals are stronger.
 
 **Given** cluster score amplification logic
 **When** multiple cluster wallets move on same token
-**Then** signal score is amplified per FR15
+**Then** signal score is amplified per FR22
 **And** amplification factor is visible in signal details
 
 **Given** sidebar cluster view
@@ -682,27 +704,35 @@ So that I know why certain signals are stronger.
 **Then** I understand relationships visually
 **And** can navigate to any member wallet
 
-#### Story 4.6: Integration & E2E Validation
+#### Story 4.5: Integration & E2E Validation
 
 As a developer,
 I want Epic 4 deployed and tested end-to-end,
-So that I can validate cluster analysis before building signal pipeline.
+So that I can validate network discovery and clustering before building signal pipeline.
 
 **Acceptance Criteria:**
 
 **Given** Docker environment updated with Epic 4 features
 **When** I run `docker compose up`
-**Then** Neo4j graph queries execute correctly
+**Then** Helius client can fetch funding sources/targets
+**And** Neo4j graph queries execute correctly
 **And** cluster detection algorithms run
 
 **Given** Playwright E2E test suite for Epic 4
 **When** tests run against the deployed app
-**Then** FUNDED_BY relationships appear in wallet details
-**And** SYNCED_BUY patterns are detected
+**Then** network discovery triggers when wallet is watchlisted
+**And** discovered wallets go through profiling cycle
+**And** FUNDED_BY relationships appear in wallet details
 **And** clusters display in Explorer → Clusters tab
 **And** leaders are identified and marked
 
-**Given** Neo4j test fixtures with relationship data
+**Given** Config → Network Discovery section
+**When** E2E tests run
+**Then** parameters can be adjusted
+**And** discovery can be enabled/disabled
+**And** safeguards prevent discovery explosion
+
+**Given** Neo4j test fixtures with FUNDED_BY relationships
 **When** E2E tests run
 **Then** cluster grouping is validated
 **And** score amplification logic is correct

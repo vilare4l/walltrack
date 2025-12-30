@@ -68,7 +68,9 @@
       "Bash(del /Q \"C:\\\\Users\\\\pc\\\\projects\\\\walltrack\\\\tests\\\\core\\\\feedback\\\\test_backtester.py\")",
       "Bash(cd:*)",
       "Bash(if not exist \"C:\\\\Users\\\\pc\\\\projects\\\\walltrack\\\\docs\\\\sprint-artifacts\\\\epic-1\" mkdir \"C:\\\\Users\\\\pc\\\\projects\\\\walltrack\\\\docs\\\\sprint-artifacts\\\\epic-1\")",
-      "Bash(uv run:*)"
+      "Bash(uv run:*)",
+      "mcp__serena__activate_project",
+      "Bash(psql:*)"
     ]
   }
 }
