@@ -15,12 +15,20 @@ from walltrack.data.neo4j.client import close_neo4j_client, get_neo4j_client
 from walltrack.data.supabase.client import close_supabase_client, get_supabase_client
 from walltrack.scheduler.scheduler import shutdown_scheduler, start_scheduler
 from walltrack.ui.app import create_dashboard
+from walltrack.workers.wallet_decay_worker import WalletDecayWorker
+from walltrack.workers.wallet_discovery_worker import WalletDiscoveryWorker
+from walltrack.workers.wallet_profiling_worker import WalletProfilingWorker
 
 log = structlog.get_logger()
 
 # Config keys for surveillance (shared with config.py)
 _CONFIG_KEY_SURVEILLANCE_ENABLED = "surveillance_enabled"
 _CONFIG_KEY_SURVEILLANCE_INTERVAL = "surveillance_interval_hours"
+
+# Worker instances (Story 3.5.6 - accessible from status_bar.py for monitoring)
+wallet_discovery_worker: WalletDiscoveryWorker | None = None
+wallet_profiling_worker: WalletProfilingWorker | None = None
+wallet_decay_worker: WalletDecayWorker | None = None
 
 
 async def _restore_surveillance_job() -> None:
@@ -86,9 +94,89 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     # Restore surveillance job if enabled (Story 2.2 - code review fix)
     await _restore_surveillance_job()
 
+    # Configure global RPC rate limiter (Story 3.5.5 - RPC rate limiting)
+    try:
+        from walltrack.data.supabase.repositories.config_repo import (  # noqa: PLC0415
+            ConfigRepository,
+        )
+        from walltrack.services.solana.rate_limiter import GlobalRateLimiter  # noqa: PLC0415
+
+        client = await get_supabase_client()
+        config_repo = ConfigRepository(client)
+
+        # Load RPC delay from config (default: 1000ms = 1 req/sec)
+        delay_ms_value = await config_repo.get_value("profiling_rpc_delay_ms")
+        delay_ms = int(delay_ms_value) if delay_ms_value else 1000
+
+        GlobalRateLimiter.configure(delay_ms)
+        log.info(
+            "global_rate_limiter_configured_from_db",
+            delay_ms=delay_ms,
+            max_rps=1000.0 / delay_ms,
+        )
+    except Exception as e:
+        log.warning("rate_limiter_config_failed_using_default", error=str(e))
+
+    # Start wallet discovery worker (Story 3.5.5 - autonomous wallet discovery)
+    # Worker polls database every 120s for tokens with wallets_discovered=false
+    # and discovers smart money wallets automatically
+    import asyncio  # noqa: PLC0415
+
+    global wallet_discovery_worker, wallet_profiling_worker, wallet_decay_worker
+
+    wallet_discovery_worker = WalletDiscoveryWorker(poll_interval=120)
+    discovery_worker_task = asyncio.create_task(wallet_discovery_worker.run())
+    log.info("wallet_discovery_worker_started", poll_interval=120)
+
+    # Start wallet profiling worker (Stories 3.2 + 3.3 + 3.5)
+    # Worker polls database every 60s for wallets with status='discovered'
+    # and processes them automatically (performance + behavioral + watchlist)
+    wallet_profiling_worker = WalletProfilingWorker(poll_interval=60)
+    wallet_worker_task = asyncio.create_task(wallet_profiling_worker.run())
+    log.info("wallet_profiling_worker_started", poll_interval=60)
+
+    # Start wallet decay worker (Story 3.4 - autonomous decay detection)
+    # Worker polls database every 4 hours for wallets with status='profiled' or 'watchlisted'
+    # and checks for performance degradation automatically
+    wallet_decay_worker = WalletDecayWorker(poll_interval=14400)  # 4 hours
+    decay_worker_task = asyncio.create_task(wallet_decay_worker.run())
+    log.info("wallet_decay_worker_started", poll_interval=14400)
+
     yield
 
     # Shutdown
+    log.info("shutdown_initiated")
+
+    # Stop wallet decay worker
+    if wallet_decay_worker:
+        await wallet_decay_worker.stop()
+        decay_worker_task.cancel()
+        try:
+            await decay_worker_task
+        except asyncio.CancelledError:
+            pass
+        log.info("wallet_decay_worker_stopped")
+
+    # Stop wallet profiling worker
+    if wallet_profiling_worker:
+        await wallet_profiling_worker.stop()
+        wallet_worker_task.cancel()
+        try:
+            await wallet_worker_task
+        except asyncio.CancelledError:
+            pass
+        log.info("wallet_profiling_worker_stopped")
+
+    # Stop wallet discovery worker
+    if wallet_discovery_worker:
+        await wallet_discovery_worker.stop()
+        discovery_worker_task.cancel()
+        try:
+            await discovery_worker_task
+        except asyncio.CancelledError:
+            pass
+        log.info("wallet_discovery_worker_stopped")
+
     await shutdown_scheduler()
     await close_supabase_client()
     await close_neo4j_client()

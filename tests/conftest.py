@@ -32,10 +32,11 @@ TEST_ENV = os.getenv("TEST_ENV", "local")
 
 # Environment-specific base URLs
 # Note: Gradio dashboard is mounted at /dashboard on the FastAPI server
+# Docker compose maps internal port 8000 to external port 8080
 ENV_CONFIG = {
     "local": {
-        "base_url": os.getenv("BASE_URL", "http://localhost:8000/dashboard"),
-        "api_url": os.getenv("API_URL", "http://localhost:8000"),
+        "base_url": os.getenv("BASE_URL", "http://localhost:8080/dashboard"),
+        "api_url": os.getenv("API_URL", "http://localhost:8080"),
     },
     "staging": {
         "base_url": os.getenv("BASE_URL", "https://staging.walltrack.example.com/dashboard"),

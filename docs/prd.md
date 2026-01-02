@@ -161,14 +161,18 @@ Simulation mode mirrors live behavior exactly—same orders, same sizing, same e
 
 ### Signal Scoring Model
 
-Weighted rule-based scoring:
+Weighted rule-based scoring (V2 simplified):
 
 | Factor | Weight | Calculation |
 |--------|--------|-------------|
-| Wallet Quality | 35% | Historical win rate + PnL + consistency |
-| Cluster Confirmation | 25% | Number of cluster wallets on same token |
-| Token Characteristics | 25% | Liquidity, age, holder distribution |
-| Timing Context | 15% | Time since token creation, market conditions |
+| Wallet Quality | 50% | Historical win rate + PnL + timing_percentile + consistency |
+| Token Characteristics | 50% | Liquidity, age, market cap, holder distribution |
+
+**V2 Simplifications:**
+- **Cluster Confirmation removed:** FUNDED_BY clustering is organizational (network discovery), not trading coordination. Without SYNCED_BUY detection, cluster-based scoring lacks predictive value.
+- **Timing Context merged into Token:** Token age is a token characteristic, not separate context. Market conditions deferred to V2+.
+
+**Signal = 50% Wallet Quality × 50% Token Quality**
 
 **Threshold:** Score ≥ 0.70 → Create position (adjustable)
 
@@ -280,7 +284,8 @@ src/walltrack/
 ### Data Flow
 
 ```
-Helius Webhook → FastAPI → Signal Processing → Neo4j/Supabase Query
+**Default Flow (RPC Polling)**:
+RPC Polling Worker (10s) → Signal Processing → Neo4j/Supabase Query
                                    ↓
                              Rule-based Scoring
                                    ↓
@@ -295,16 +300,19 @@ Helius Webhook → FastAPI → Signal Processing → Neo4j/Supabase Query
                      Monitor → Exit Orders
                             ↓
                      Execute (Live mode only)
+
+**Optional Flow (Helius Webhooks)**:
+Helius Webhook → FastAPI → Signal Processing → (same as above)
 ```
 
 ### External Integrations
 
 | Service | Purpose | Fallback |
 |---------|---------|----------|
-| **Helius** | Real-time swap webhooks | RPC polling |
+| **Solana RPC Public** | Primary: Transaction history, wallet profiling, signal detection (polling) | Multiple providers (Helius RPC, QuickNode, Alchemy) |
+| **Helius Enhanced** | Optional: Webhooks for real-time signals (opt-in), fallback if RPC fails | Solana RPC Public |
 | **DexScreener** | Token prices, liquidity, market cap | Birdeye |
 | **Jupiter** | Swap execution | Raydium direct |
-| **Solana RPC** | Blockchain queries | Multiple providers |
 
 ### Security Considerations
 
@@ -325,7 +333,7 @@ Helius Webhook → FastAPI → Signal Processing → Neo4j/Supabase Query
 
 ### Wallet Intelligence
 
-- FR4: System can discover wallets from token transaction history
+- FR4: System can discover wallets from token transaction history via Solana RPC Public (`getSignaturesForAddress` + `getTransaction` + custom parsing)
 - FR5: System can analyze wallet historical performance (win rate, PnL, timing percentile)
 - FR6: System can profile wallet behavioral patterns (activity hours, position sizing style)
 - FR7: System can detect wallet performance decay using rolling window analysis
@@ -349,7 +357,7 @@ Helius Webhook → FastAPI → Signal Processing → Neo4j/Supabase Query
 - FR19: ~~System can identify wallets appearing together on multiple early tokens~~ **Out of scope V2** - Deferred to future version
 - FR20: System can group related wallets into clusters (watchlist only)
 - FR21: System can identify cluster leaders (wallets that initiate movements)
-- FR22: System can amplify signal score when multiple cluster wallets move together
+- FR22: ~~System can amplify signal score when multiple cluster wallets move together~~ **Out of scope V2** - Scoring simplified to Wallet Quality (50%) + Token Characteristics (50%)
 
 **Network Discovery (Epic 4):**
 - When wallet is watchlisted, system automatically discovers sibling wallets via funding relationships
@@ -359,7 +367,9 @@ Helius Webhook → FastAPI → Signal Processing → Neo4j/Supabase Query
 
 ### Signal Processing
 
-- FR23: System can receive real-time swap notifications via Helius webhooks
+- FR23: System can detect swap signals via dual-mode approach:
+  - **Default**: RPC Polling (10-second intervals, free tier, no external dependencies)
+  - **Optional**: Helius Webhooks (real-time, requires Helius API key, opt-in via Config UI)
 - FR24: System can filter notifications to only monitored wallet addresses
 - FR25: System can calculate multi-factor signal score (wallet, cluster, token, context)
 - FR26: System can apply scoring threshold to determine trade eligibility
@@ -439,6 +449,15 @@ Helius Webhook → FastAPI → Signal Processing → Neo4j/Supabase Query
 | Watchlist Size | Support 1,000+ monitored wallets |
 | Trade History | Store 1 year of trade data |
 | Signal Log | Store 6 months of all signals |
+
+### Cost Optimization (NFR)
+
+- **Target**: Reduce external API costs from 125K+ req/month (Helius) to 0-75K req/month
+- **Strategy**:
+  - Use Solana RPC Public (free, 240 req/min) for Epic 3 (discovery, profiling)
+  - Use RPC Polling (10s intervals) for Epic 5 signals (default mode)
+  - Reserve Helius for opt-in webhooks only (premium feature)
+- **Measurement**: Track monthly Helius API usage via Config dashboard
 
 ## Risk Mitigation Strategy
 

@@ -70,7 +70,14 @@
       "Bash(if not exist \"C:\\\\Users\\\\pc\\\\projects\\\\walltrack\\\\docs\\\\sprint-artifacts\\\\epic-1\" mkdir \"C:\\\\Users\\\\pc\\\\projects\\\\walltrack\\\\docs\\\\sprint-artifacts\\\\epic-1\")",
       "Bash(uv run:*)",
       "mcp__serena__activate_project",
-      "Bash(psql:*)"
+      "Bash(psql:*)",
+      "Bash(timeout 10 bash:*)",
+      "Skill(bmad:bmm:workflows:code-review)",
+      "Bash(if not exist \"C:\\\\Users\\\\pc\\\\projects\\\\walltrack\\\\tests\\\\unit\\\\core\\\\analysis\" mkdir \"C:\\\\Users\\\\pc\\\\projects\\\\walltrack\\\\tests\\\\unit\\\\core\\\\analysis\")",
+      "Bash(test:*)",
+      "Bash(if not exist \"C:\\\\Users\\\\pc\\\\projects\\\\walltrack\\\\tests\\\\unit\\\\workers\" mkdir \"C:\\\\Users\\\\pc\\\\projects\\\\walltrack\\\\tests\\\\unit\\\\workers\")",
+      "Bash(ls:*)",
+      "Bash(powershell -Command \"Get-Content ''C:\\\\Users\\\\pc\\\\projects\\\\walltrack\\\\docs\\\\sprint-artifacts\\\\epic-3\\\\3-5-5-global-rate-limiter-discovery-worker.md'' | Select-Object -Last 50\")"
     ]
   }
 }

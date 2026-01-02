@@ -9,6 +9,7 @@ The client extends BaseAPIClient to inherit:
 - Proper resource cleanup
 """
 
+import asyncio
 from typing import Any
 
 import structlog
@@ -46,9 +47,11 @@ class SolanaRPCClient(BaseAPIClient):
             circuit_breaker_threshold=5,
             circuit_breaker_cooldown=30,
         )
+
         log.debug(
             "solana_rpc_client_initialized",
             base_url=settings.solana_rpc_url,
+            rate_limit="2 req/sec (global)",
         )
 
     async def get_account_info(self, address: str) -> dict[str, Any] | None:
@@ -226,4 +229,184 @@ class SolanaRPCClient(BaseAPIClient):
             raise WalletConnectionError(
                 f"Failed to get token accounts: {e}",
                 wallet_address=token_mint,
+            ) from e
+
+    async def _throttle_request(self) -> None:
+        """Enforce global rate limiting (2 req/sec shared across all instances).
+
+        Uses GlobalRateLimiter singleton to coordinate rate limiting across:
+        - WalletDiscoveryWorker
+        - WalletProfilingWorker
+        - DecayCheckScheduler
+
+        Called automatically before each RPC request.
+
+        Story: 3.5.5 - Global RPC Rate Limiter
+        """
+        from walltrack.services.solana.rate_limiter import GlobalRateLimiter
+
+        limiter = GlobalRateLimiter.get_instance()
+        await limiter.acquire()
+
+    async def getSignaturesForAddress(
+        self, address: str, limit: int = 1000
+    ) -> list[dict[str, Any]]:
+        """Get transaction signatures for an address via getSignaturesForAddress RPC.
+
+        Fetches a list of transaction signatures for the given address,
+        sorted by most recent first.
+
+        Args:
+            address: Solana address (wallet or token mint) to fetch signatures for.
+            limit: Maximum number of signatures to return (default: 1000, max: 1000).
+
+        Returns:
+            List of signature objects with structure:
+            [
+                {
+                    "signature": "5j7s8k...",
+                    "slot": 123456789,
+                    "blockTime": 1703001234,
+                    "err": None,
+                    "memo": None,
+                },
+                ...
+            ]
+            Returns empty list if no transactions found.
+
+        Raises:
+            WalletConnectionError: If RPC call fails after retries.
+
+        Note:
+            - Rate limited to 2 req/sec (safety margin below 4 req/sec RPC limit)
+            - Retries automatically on 429 errors with exponential backoff
+            - Signatures are returned newest first
+        """
+        await self._throttle_request()
+
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getSignaturesForAddress",
+            "params": [address, {"limit": limit}],
+        }
+
+        log.debug(
+            "solana_get_signatures_for_address",
+            address=address[:8] + "...",
+            limit=limit,
+        )
+
+        try:
+            response = await self.post("", json=payload)
+            data = response.json()
+
+            result = data.get("result", [])
+
+            log.info(
+                "solana_signatures_retrieved",
+                address=address[:8] + "...",
+                count=len(result),
+            )
+
+            return result
+
+        except Exception as e:
+            log.error(
+                "solana_get_signatures_failed",
+                address=address[:8] + "...",
+                error=str(e),
+            )
+            raise WalletConnectionError(
+                f"Failed to fetch signatures for address: {e}",
+                wallet_address=address,
+            ) from e
+
+    async def getTransaction(self, signature: str) -> dict[str, Any] | None:
+        """Get full transaction details via getTransaction RPC.
+
+        Fetches complete transaction data including instructions, accounts,
+        balance changes, and token transfers.
+
+        Args:
+            signature: Transaction signature (base58 format).
+
+        Returns:
+            Transaction object with structure:
+            {
+                "slot": 123456789,
+                "transaction": {
+                    "message": {
+                        "accountKeys": ["wallet1", "wallet2", ...],
+                        "instructions": [...]
+                    },
+                    "signatures": ["sig1", ...]
+                },
+                "meta": {
+                    "err": None,
+                    "preBalances": [1000000000, ...],
+                    "postBalances": [500000000, ...],
+                    "preTokenBalances": [...],
+                    "postTokenBalances": [...]
+                },
+                "blockTime": 1703001234
+            }
+            Returns None if transaction not found.
+
+        Raises:
+            WalletConnectionError: If RPC call fails after retries.
+
+        Note:
+            - Rate limited to 2 req/sec (safety margin below 4 req/sec RPC limit)
+            - Retries automatically on 429 errors with exponential backoff
+            - Uses "jsonParsed" encoding for token balances
+            - Max transaction age: ~2 weeks on RPC public nodes
+        """
+        await self._throttle_request()
+
+        payload = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "getTransaction",
+            "params": [
+                signature,
+                {
+                    "encoding": "jsonParsed",
+                    "maxSupportedTransactionVersion": 0,
+                },
+            ],
+        }
+
+        log.debug("solana_get_transaction", signature=signature[:8] + "...")
+
+        try:
+            response = await self.post("", json=payload)
+            data = response.json()
+
+            result = data.get("result")
+
+            if result is None:
+                log.debug(
+                    "solana_transaction_not_found",
+                    signature=signature[:8] + "...",
+                )
+                return None
+
+            log.debug(
+                "solana_transaction_retrieved",
+                signature=signature[:8] + "...",
+                block_time=result.get("blockTime"),
+            )
+
+            return result
+
+        except Exception as e:
+            log.error(
+                "solana_get_transaction_failed",
+                signature=signature[:8] + "...",
+                error=str(e),
+            )
+            raise WalletConnectionError(
+                f"Failed to fetch transaction: {e}",
+                wallet_address=signature,
             ) from e

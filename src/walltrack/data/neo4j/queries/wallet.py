@@ -331,6 +331,88 @@ async def update_wallet_behavioral_profile(
         raise
 
 
+async def update_wallet_watchlist_status(
+    wallet_address: str,
+    status: str,
+    score: float,
+) -> dict[str, any]:
+    """Update watchlist status properties for a wallet node in Neo4j.
+
+    Args:
+        wallet_address: Solana wallet address to update.
+        status: Wallet status (discovered, profiled, watchlisted, ignored, flagged, removed, blacklisted).
+        score: Watchlist score (0.0-1.0).
+
+    Returns:
+        Dict with updated wallet node properties.
+
+    Example:
+        result = await update_wallet_watchlist_status(
+            wallet_address="9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin",
+            status="watchlisted",
+            score=0.8523,
+        )
+    """
+    client = await get_neo4j_client()
+
+    query = """
+    MATCH (w:Wallet {wallet_address: $wallet_address})
+    SET w.wallet_status = $status,
+        w.watchlist_score = $score,
+        w.watchlist_updated_at = datetime()
+    RETURN w.wallet_address AS wallet_address,
+           w.wallet_status AS wallet_status,
+           w.watchlist_score AS watchlist_score
+    """
+
+    log.info(
+        "updating_wallet_watchlist_status_neo4j",
+        wallet_address=wallet_address[:8] + "...",
+        status=status,
+        score=score,
+    )
+
+    try:
+        result = await client.execute_query(
+            query,
+            parameters={
+                "wallet_address": wallet_address,
+                "status": status,
+                "score": score,
+            },
+        )
+
+        if not result:
+            log.error(
+                "wallet_watchlist_update_failed_no_result",
+                wallet_address=wallet_address[:8] + "...",
+            )
+            return {}
+
+        node_data = result[0]
+
+        log.info(
+            "wallet_watchlist_status_updated",
+            wallet_address=wallet_address[:8] + "...",
+            status=node_data.get("wallet_status"),
+            score=node_data.get("watchlist_score"),
+        )
+
+        return {
+            "wallet_address": node_data.get("wallet_address"),
+            "wallet_status": node_data.get("wallet_status"),
+            "watchlist_score": node_data.get("watchlist_score"),
+        }
+
+    except Exception as e:
+        log.error(
+            "wallet_watchlist_update_error",
+            wallet_address=wallet_address[:8] + "...",
+            error=str(e),
+        )
+        raise
+
+
 async def delete_wallet_node(wallet_address: str) -> bool:
     """Delete a wallet node from Neo4j.
 

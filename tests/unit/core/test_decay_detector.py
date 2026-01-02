@@ -5,7 +5,7 @@ Story 3.4 - Wallet Decay Detection
 
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -19,6 +19,33 @@ from walltrack.core.wallets.decay_detector import (
 from walltrack.data.models.decay_event import DecayEventType
 from walltrack.data.models.transaction import SwapTransaction, TransactionType
 from walltrack.data.models.wallet import Wallet
+
+
+def _setup_rpc_mocks(mock_rpc_client, mock_parser, transactions):
+    """Helper to set up RPC mocks for decay detector tests.
+
+    Mocks the RPC pattern from Story 3.2:
+    1. get_signatures_for_address() returns signatures
+    2. get_transaction() returns raw transaction data
+    3. TransactionParser.parse() returns SwapTransaction objects
+
+    Args:
+        mock_rpc_client: AsyncMock for RPCClient
+        mock_parser: Mock for TransactionParser instance
+        transactions: List of SwapTransaction objects to return
+    """
+    # Step 1: Mock get_signatures_for_address to return signatures (one per transaction)
+    signatures = [{"signature": tx.signature} for tx in transactions]
+    mock_rpc_client.get_signatures_for_address = AsyncMock(return_value=signatures)
+
+    # Step 2: Mock get_transaction to return raw transactions
+    # Create raw transaction data for each signature
+    mock_rpc_client.get_transaction = AsyncMock(
+        side_effect=[{"transaction": "data", "blockTime": tx.timestamp} for tx in transactions]
+    )
+
+    # Step 3: Mock parser.parse to return the SwapTransaction objects sequentially
+    mock_parser.parse = MagicMock(side_effect=transactions)
 
 
 @pytest.fixture
@@ -46,16 +73,30 @@ def mock_wallet_repo():
 
 
 @pytest.fixture
-def mock_helius_client():
-    """Mock HeliusClient."""
+def mock_rpc_client():
+    """Mock RPCClient for RPC Public API."""
     client = AsyncMock()
     return client
 
 
 @pytest.fixture
-def detector(decay_config, mock_wallet_repo, mock_helius_client):
-    """DecayDetector instance with mocked dependencies."""
-    return DecayDetector(decay_config, mock_wallet_repo, mock_helius_client)
+def mock_parser():
+    """Mock TransactionParser for RPC transaction parsing."""
+    with patch("walltrack.core.wallets.decay_detector.TransactionParser") as mock:
+        parser_instance = MagicMock()
+        # Default: Return None (will be overridden in _setup_rpc_mocks)
+        parser_instance.parse = MagicMock(return_value=None)
+        mock.return_value = parser_instance
+        yield parser_instance
+
+
+@pytest.fixture
+def detector(decay_config, mock_wallet_repo, mock_rpc_client, mock_parser):
+    """DecayDetector instance with mocked dependencies.
+
+    Note: mock_parser must be a dependency so patch is active during detector creation.
+    """
+    return DecayDetector(decay_config, mock_wallet_repo, mock_rpc_client)
 
 
 def create_wallet(
@@ -128,7 +169,7 @@ class TestDecayDetector:
 
     @pytest.mark.asyncio
     async def test_insufficient_trades_returns_none(
-        self, detector, mock_wallet_repo, mock_helius_client
+        self, detector, mock_wallet_repo, mock_rpc_client, mock_parser
     ):
         """Test that detector returns None if wallet has < 20 trades (AC compliance)."""
         wallet = create_wallet()
@@ -147,7 +188,8 @@ class TestDecayDetector:
                 create_swap_transaction("token1", TransactionType.SELL, 1.5, sell_time)
             )
 
-        mock_helius_client.get_swap_transactions = AsyncMock(return_value=transactions)
+        # Mock RPC calls to return transactions
+        _setup_rpc_mocks(mock_rpc_client, mock_parser, transactions)
 
         # Execute
         event = await detector.check_wallet_decay("9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin")
@@ -157,7 +199,7 @@ class TestDecayDetector:
 
     @pytest.mark.asyncio
     async def test_decay_detected_below_threshold(
-        self, detector, mock_wallet_repo, mock_helius_client
+        self, detector, mock_wallet_repo, mock_rpc_client, mock_parser
     ):
         """Test decay detected when rolling win rate < 40% (AC1)."""
         wallet = create_wallet(score=0.85, decay_status="ok")
@@ -185,7 +227,8 @@ class TestDecayDetector:
                 )
             )
 
-        mock_helius_client.get_swap_transactions = AsyncMock(return_value=transactions)
+        # Mock RPC calls to return transactions
+        _setup_rpc_mocks(mock_rpc_client, mock_parser, transactions)
 
         # Execute
         event = await detector.check_wallet_decay("9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin")
@@ -206,7 +249,7 @@ class TestDecayDetector:
 
     @pytest.mark.asyncio
     async def test_recovery_above_threshold(
-        self, detector, mock_wallet_repo, mock_helius_client
+        self, detector, mock_wallet_repo, mock_rpc_client, mock_parser
     ):
         """Test recovery when rolling win rate >= 50% and wallet is flagged (AC1)."""
         wallet = create_wallet(score=0.68, decay_status="flagged")
@@ -233,7 +276,8 @@ class TestDecayDetector:
                 )
             )
 
-        mock_helius_client.get_swap_transactions = AsyncMock(return_value=transactions)
+        # Mock RPC calls to return transactions
+        _setup_rpc_mocks(mock_rpc_client, mock_parser, transactions)
 
         # Execute
         event = await detector.check_wallet_decay("9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin")
@@ -254,7 +298,7 @@ class TestDecayDetector:
 
     @pytest.mark.asyncio
     async def test_consecutive_losses(
-        self, detector, mock_wallet_repo, mock_helius_client
+        self, detector, mock_wallet_repo, mock_rpc_client, mock_parser
     ):
         """Test downgraded status when 3+ consecutive losses (AC2)."""
         wallet = create_wallet(score=0.85, decay_status="ok")
@@ -277,7 +321,8 @@ class TestDecayDetector:
                 )
             )
 
-        mock_helius_client.get_swap_transactions = AsyncMock(return_value=transactions)
+        # Mock RPC calls to return transactions
+        _setup_rpc_mocks(mock_rpc_client, mock_parser, transactions)
 
         # Execute
         event = await detector.check_wallet_decay("9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin")
@@ -296,7 +341,7 @@ class TestDecayDetector:
 
     @pytest.mark.asyncio
     async def test_dormancy_detection(
-        self, detector, mock_wallet_repo, mock_helius_client
+        self, detector, mock_wallet_repo, mock_rpc_client, mock_parser
     ):
         """Test dormant status when 30+ days inactive (AC3)."""
         # Wallet with last activity 45 days ago
@@ -321,7 +366,8 @@ class TestDecayDetector:
                 )
             )
 
-        mock_helius_client.get_swap_transactions = AsyncMock(return_value=transactions)
+        # Mock RPC calls to return transactions
+        _setup_rpc_mocks(mock_rpc_client, mock_parser, transactions)
 
         # Execute
         event = await detector.check_wallet_decay("9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin")
@@ -338,7 +384,7 @@ class TestDecayDetector:
 
     @pytest.mark.asyncio
     async def test_score_downgrade_decay(
-        self, detector, mock_wallet_repo, mock_helius_client
+        self, detector, mock_wallet_repo, mock_rpc_client, mock_parser
     ):
         """Test 20% score reduction on decay event."""
         wallet = create_wallet(score=0.85, decay_status="ok")
@@ -364,7 +410,8 @@ class TestDecayDetector:
                 )
             )
 
-        mock_helius_client.get_swap_transactions = AsyncMock(return_value=transactions)
+        # Mock RPC calls to return transactions
+        _setup_rpc_mocks(mock_rpc_client, mock_parser, transactions)
 
         # Execute
         event = await detector.check_wallet_decay("9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin")
@@ -375,7 +422,7 @@ class TestDecayDetector:
 
     @pytest.mark.asyncio
     async def test_score_bounds_enforcement_min(
-        self, detector, mock_wallet_repo, mock_helius_client
+        self, detector, mock_wallet_repo, mock_rpc_client, mock_parser
     ):
         """Test score never goes below MIN_SCORE (0.1)."""
         wallet = create_wallet(score=0.12, decay_status="ok")  # Close to minimum
@@ -397,7 +444,8 @@ class TestDecayDetector:
                 )
             )
 
-        mock_helius_client.get_swap_transactions = AsyncMock(return_value=transactions)
+        # Mock RPC calls to return transactions
+        _setup_rpc_mocks(mock_rpc_client, mock_parser, transactions)
 
         # Execute
         event = await detector.check_wallet_decay("9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin")
@@ -408,7 +456,7 @@ class TestDecayDetector:
 
     @pytest.mark.asyncio
     async def test_score_bounds_enforcement_max(
-        self, detector, mock_wallet_repo, mock_helius_client
+        self, detector, mock_wallet_repo, mock_rpc_client, mock_parser
     ):
         """Test score never exceeds MAX_SCORE (1.0)."""
         wallet = create_wallet(score=0.95, decay_status="flagged")  # Close to maximum
@@ -434,7 +482,8 @@ class TestDecayDetector:
                 )
             )
 
-        mock_helius_client.get_swap_transactions = AsyncMock(return_value=transactions)
+        # Mock RPC calls to return transactions
+        _setup_rpc_mocks(mock_rpc_client, mock_parser, transactions)
 
         # Execute
         event = await detector.check_wallet_decay("9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin")
@@ -445,7 +494,7 @@ class TestDecayDetector:
 
     @pytest.mark.asyncio
     async def test_no_status_change_returns_none(
-        self, detector, mock_wallet_repo, mock_helius_client
+        self, detector, mock_wallet_repo, mock_rpc_client, mock_parser
     ):
         """Test that no event is created if status unchanged."""
         wallet = create_wallet(score=0.85, decay_status="ok")
@@ -471,7 +520,8 @@ class TestDecayDetector:
                 )
             )
 
-        mock_helius_client.get_swap_transactions = AsyncMock(return_value=transactions)
+        # Mock RPC calls to return transactions
+        _setup_rpc_mocks(mock_rpc_client, mock_parser, transactions)
 
         # Execute
         event = await detector.check_wallet_decay("9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin")

@@ -127,3 +127,38 @@ def get_next_run_time() -> str | None:
     if job and job.next_run_time:
         return job.next_run_time.isoformat()
     return None
+
+
+def get_decay_scheduler_status() -> dict:
+    """Get decay scheduler status from APScheduler (Story 3.5.6).
+
+    Note:
+        The decay check job ('decay_check') is not yet implemented as a
+        scheduled job in V2. Currently, decay checking is manual via Config page.
+        This function is a placeholder for future automated decay scheduling.
+
+    Returns:
+        Status dict with:
+            - running: Whether scheduler job exists
+            - next_run: Next run datetime (or None)
+            - current_state: 'scheduled' | 'stopped' | 'not_implemented'
+    """
+    scheduler = get_scheduler()
+
+    # TODO: Implement decay_check scheduled job (Story 3.4 follow-up)
+    # For now, check if job exists
+    job = scheduler.get_job("decay_check")
+
+    if not job:
+        return {
+            "running": False,
+            "next_run": None,
+            "current_state": "not_implemented",  # Job not yet created
+        }
+
+    # If job exists (future implementation)
+    return {
+        "running": True,
+        "next_run": job.next_run_time,
+        "current_state": "scheduled",
+    }

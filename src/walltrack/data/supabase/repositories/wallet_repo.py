@@ -27,7 +27,7 @@ from datetime import UTC, datetime
 
 import structlog
 
-from walltrack.data.models.wallet import PerformanceMetrics, Wallet
+from walltrack.data.models.wallet import PerformanceMetrics, Wallet, WalletStatus, WatchlistDecision
 from walltrack.data.neo4j.queries import wallet as neo4j_wallet
 from walltrack.data.supabase.client import SupabaseClient
 
@@ -386,6 +386,22 @@ class WalletRepository:
                 behavioral_confidence="medium",
             )
         """
+        # Step 0: Fetch current state for rollback in case of failure
+        current_wallet = await self.get_by_address(wallet_address)
+        if not current_wallet:
+            log.error(
+                "behavioral_profile_full_update_wallet_not_found",
+                wallet_address=wallet_address[:8] + "...",
+            )
+            return False
+
+        # Store original values for rollback
+        original_position_size_style = current_wallet.position_size_style
+        original_position_size_avg = current_wallet.position_size_avg
+        original_hold_duration_avg = current_wallet.hold_duration_avg
+        original_hold_duration_style = current_wallet.hold_duration_style
+        original_behavioral_confidence = current_wallet.behavioral_confidence
+
         # Step 1: Update Supabase
         supabase_success = await self.update_behavioral_profile(
             wallet_address=wallet_address,
@@ -426,7 +442,19 @@ class WalletRepository:
                 wallet_address=wallet_address[:8] + "...",
                 error=str(e),
             )
-            # Supabase is already updated, but Neo4j failed
+            # Rollback Supabase to original state
+            log.warning(
+                "behavioral_profile_rollback_supabase",
+                wallet_address=wallet_address[:8] + "...",
+            )
+            await self.update_behavioral_profile(
+                wallet_address=wallet_address,
+                position_size_style=original_position_size_style,
+                position_size_avg=original_position_size_avg,
+                hold_duration_avg=original_hold_duration_avg,
+                hold_duration_style=original_hold_duration_style,
+                behavioral_confidence=original_behavioral_confidence,
+            )
             return False
 
     async def update_decay_status(
@@ -506,6 +534,307 @@ class WalletRepository:
                 error=str(e),
             )
             return False
+
+    async def update_status(
+        self,
+        wallet_address: str,
+        status: WalletStatus,
+    ) -> None:
+        """Update wallet status (simple status transition).
+
+        Updates only the wallet_status column. Use this for simple
+        status transitions (e.g., discovered → profiled).
+
+        For watchlist status updates with metadata (score, reason),
+        use update_watchlist_status() instead.
+
+        Args:
+            wallet_address: Solana wallet address.
+            status: New wallet status.
+
+        Raises:
+            Exception: If Supabase update fails.
+
+        Example:
+            # Mark wallet as profiled after analysis
+            await repo.update_status(
+                "9xQeWvG...",
+                WalletStatus.PROFILED
+            )
+        """
+        try:
+            response = await (
+                self._client.client.table("wallets")
+                .update({"wallet_status": status.value})
+                .eq("wallet_address", wallet_address)
+                .execute()
+            )
+
+            if not response.data:
+                log.warning(
+                    "wallet_status_update_no_match",
+                    wallet_address=wallet_address[:8] + "...",
+                    status=status.value,
+                )
+            else:
+                log.info(
+                    "wallet_status_updated",
+                    wallet_address=wallet_address[:8] + "...",
+                    status=status.value,
+                )
+
+        except Exception as e:
+            log.error(
+                "wallet_status_update_failed",
+                wallet_address=wallet_address[:8] + "...",
+                status=status.value,
+                error=str(e),
+            )
+            raise
+
+    async def update_watchlist_status(
+        self,
+        wallet_address: str,
+        decision: WatchlistDecision,
+        manual: bool = False,
+        previous_status: WalletStatus | None = None,
+    ) -> None:
+        """Update wallet watchlist status and metadata.
+
+        Updates wallet_status, watchlist_score, watchlist_reason,
+        watchlist_added_date (if status='watchlisted'), and manual_override.
+
+        Also synchronizes watchlist status to Neo4j wallet node (best-effort).
+
+        Args:
+            wallet_address: Solana wallet address.
+            decision: WatchlistDecision with status, score, and reason.
+            manual: Whether this is a manual override (default: False).
+            previous_status: Previous wallet status for transition logging (optional).
+
+        Raises:
+            Exception: If Supabase update fails (Neo4j sync is best-effort).
+
+        Example:
+            decision = WatchlistDecision(
+                status=WalletStatus.WATCHLISTED,
+                score=Decimal("0.8523"),
+                reason="Meets all criteria",
+                timestamp=datetime.utcnow(),
+            )
+            await repo.update_watchlist_status(
+                "9xQeWvG...",
+                decision,
+                manual=False,
+                previous_status=WalletStatus.PROFILED
+            )
+        """
+        # Step 1: Update Supabase (critical - will raise on failure)
+        try:
+            # Prepare update record
+            now = datetime.now(UTC).isoformat()
+            update_data = {
+                "wallet_status": decision.status.value,
+                "watchlist_score": float(decision.score),
+                "watchlist_reason": decision.reason,
+                "manual_override": manual,
+                "updated_at": now,
+            }
+
+            # Set watchlist_added_date if status changed to 'watchlisted'
+            if decision.status == WalletStatus.WATCHLISTED:
+                update_data["watchlist_added_date"] = now
+
+            # Execute Supabase update
+            await (
+                self._client.client.table(self.TABLE_NAME)
+                .update(update_data)
+                .eq("wallet_address", wallet_address)
+                .execute()
+            )
+
+            # Log status transition (AC1: "status transition is logged with timestamp and reason")
+            if previous_status:
+                log.info(
+                    "wallet_status_transition",
+                    wallet_address=wallet_address[:8] + "...",
+                    transition=f"{previous_status.value} → {decision.status.value}",
+                    score=float(decision.score),
+                    reason=decision.reason,
+                    timestamp=now,
+                    manual=manual,
+                )
+            else:
+                log.info(
+                    "wallet_watchlist_status_updated_supabase",
+                    wallet_address=wallet_address[:8] + "...",
+                    status=decision.status.value,
+                    score=float(decision.score),
+                    manual=manual,
+                )
+
+        except Exception as e:
+            log.error(
+                "wallet_watchlist_status_update_failed_supabase",
+                wallet_address=wallet_address[:8] + "...",
+                error=str(e),
+            )
+            raise
+
+        # Step 2: Synchronize to Neo4j (best-effort - non-fatal)
+        try:
+            await neo4j_wallet.update_wallet_watchlist_status(
+                wallet_address=wallet_address,
+                status=decision.status.value,
+                score=float(decision.score),
+            )
+
+            log.debug(
+                "wallet_watchlist_status_synced_neo4j",
+                wallet_address=wallet_address[:8] + "...",
+            )
+
+        except Exception as neo4j_error:
+            # Neo4j sync failure is non-fatal (best-effort pattern)
+            log.warning(
+                "wallet_watchlist_status_neo4j_sync_failed",
+                wallet_address=wallet_address[:8] + "...",
+                error=str(neo4j_error),
+            )
+
+    async def get_wallets_by_status(self, status: WalletStatus) -> list[Wallet]:
+        """Get all wallets with specified status.
+
+        Args:
+            status: WalletStatus to filter by.
+
+        Returns:
+            List of Wallet models with matching status, ordered by watchlist_score descending.
+
+        Example:
+            watchlisted_wallets = await repo.get_wallets_by_status(WalletStatus.WATCHLISTED)
+        """
+        try:
+            result = await (
+                self._client.client.table(self.TABLE_NAME)
+                .select("*")
+                .eq("wallet_status", status.value)
+                .order("watchlist_score", desc=True, nullsfirst=False)
+                .execute()
+            )
+
+            wallets = []
+            for row in result.data or []:
+                wallets.append(Wallet(**row))
+
+            log.info(
+                "wallets_fetched_by_status",
+                status=status.value,
+                count=len(wallets),
+            )
+
+            return wallets
+
+        except Exception as e:
+            log.error(
+                "wallets_get_by_status_failed",
+                status=status.value,
+                error=str(e),
+            )
+            return []
+
+    async def get_watchlist_count(self) -> int:
+        """Get count of wallets with 'watchlisted' status.
+
+        Returns:
+            Number of watchlisted wallets.
+
+        Example:
+            count = await repo.get_watchlist_count()
+            # count = 42
+        """
+        try:
+            result = await (
+                self._client.client.table(self.TABLE_NAME)
+                .select("id", count="exact")
+                .eq("wallet_status", WalletStatus.WATCHLISTED.value)
+                .execute()
+            )
+
+            count = result.count or 0
+            log.debug("watchlist_count_fetched", count=count)
+            return count
+
+        except Exception as e:
+            log.error("watchlist_count_failed", error=str(e))
+            return 0
+
+    async def blacklist_wallet(self, wallet_address: str, reason: str) -> None:
+        """Blacklist a wallet with reason.
+
+        Sets wallet_status to 'blacklisted' and stores reason in watchlist_reason.
+
+        Args:
+            wallet_address: Solana wallet address.
+            reason: Reason for blacklisting (e.g., "Suspicious activity", "Scammer").
+
+        Raises:
+            Exception: If Supabase update fails (Neo4j sync is best-effort).
+
+        Example:
+            await repo.blacklist_wallet("9xQeWvG...", "Suspected bot activity")
+        """
+        # Step 1: Update Supabase (critical - will raise on failure)
+        try:
+            now = datetime.now(UTC).isoformat()
+            update_data = {
+                "wallet_status": WalletStatus.BLACKLISTED.value,
+                "watchlist_reason": f"Blacklisted: {reason}",
+                "manual_override": True,  # Blacklist is always manual
+                "updated_at": now,
+            }
+
+            await (
+                self._client.client.table(self.TABLE_NAME)
+                .update(update_data)
+                .eq("wallet_address", wallet_address)
+                .execute()
+            )
+
+            log.warning(
+                "wallet_blacklisted_supabase",
+                wallet_address=wallet_address[:8] + "...",
+                reason=reason,
+            )
+
+        except Exception as e:
+            log.error(
+                "wallet_blacklist_failed_supabase",
+                wallet_address=wallet_address[:8] + "...",
+                error=str(e),
+            )
+            raise
+
+        # Step 2: Synchronize to Neo4j (best-effort - non-fatal)
+        try:
+            await neo4j_wallet.update_wallet_watchlist_status(
+                wallet_address=wallet_address,
+                status=WalletStatus.BLACKLISTED.value,
+                score=0.0,  # Blacklisted wallets get 0 score
+            )
+
+            log.debug(
+                "wallet_blacklisted_synced_neo4j",
+                wallet_address=wallet_address[:8] + "...",
+            )
+
+        except Exception as neo4j_error:
+            # Neo4j sync failure is non-fatal (best-effort pattern)
+            log.warning(
+                "wallet_blacklist_neo4j_sync_failed",
+                wallet_address=wallet_address[:8] + "...",
+                error=str(neo4j_error),
+            )
 
     async def delete_by_address(self, wallet_address: str) -> bool:
         """Delete wallet by address.

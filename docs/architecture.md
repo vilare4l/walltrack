@@ -53,7 +53,8 @@ _This document builds collaboratively through step-by-step discovery. Sections a
 |------------|---------------|
 | Private Key Storage | Environment variables only, never in code or logs |
 | Webhook Security | Helius HMAC signature verification required |
-| External APIs | Helius, Jupiter, DexScreener, Solana RPC (all with fallbacks) |
+| External APIs | Solana RPC Public (primary), Jupiter, DexScreener, Helius Enhanced (optional) |
+| API Priorities | RPC for discovery/profiling/signals, Helius for opt-in webhooks only |
 | Dual Database | Neo4j (relationships) + Supabase (metrics, config) |
 | Rebuild Context | V2 simplification - clear boundaries between services/ and core/ |
 
@@ -64,7 +65,8 @@ _This document builds collaboratively through step-by-step discovery. Sections a
 3. **Logging & Observability** - structlog with bound context, no sensitive data
 4. **Configuration Management** - Static (env) + Dynamic (Supabase table)
 5. **API Abstraction** - BaseAPIClient with circuit breaker for all external services
-6. **Validation Step-by-Step** - Each feature validated (UI + E2E test) before next
+6. **Global RPC Rate Limiter** (Story 3.5.5) - Singleton pattern, 2 req/sec shared across all workers (Discovery, Profiling, Decay), prevents Solana RPC limit violations
+7. **Validation Step-by-Step** - Each feature validated (UI + E2E test) before next
 
 ### Legacy Code Analysis
 
@@ -192,10 +194,13 @@ uv add --dev pytest pytest-asyncio ruff mypy
 ```
 services/
 ├── base.py          # BaseAPIClient with retry, circuit breaker
-├── helius/          # Webhook management (fallback: RPC polling)
+├── solana/          # PRIMARY: RPC client + transaction parser
+│   ├── rpc_client.py         # getSignaturesForAddress, getTransaction
+│   └── transaction_parser.py # Parse raw RPC → SwapTransaction
+├── helius/          # OPTIONAL: Webhooks only (opt-in)
+│   └── webhook_manager.py
 ├── jupiter/         # Swap execution (fallback: Raydium)
-├── dexscreener/     # Token data (fallback: Birdeye)
-└── solana/          # RPC client (multi-provider rotation)
+└── dexscreener/     # Token data (fallback: Birdeye)
 ```
 
 **Retry Configuration:**
@@ -637,7 +642,12 @@ async def on_wallet_watchlisted(wallet_id: str):
         return
 
     # 1. Find funder(s) - qui a financé ce wallet ?
-    funders = await helius_client.get_funding_sources(wallet_id)
+    # Primary: RPC approach
+    signatures = await rpc_client.getSignaturesForAddress(wallet_id)
+    funding_txs = [tx for tx in transactions if tx.type == "SOL_TRANSFER"]
+    funders = [tx.sender for tx in funding_txs]
+
+    # Alternative: Helius opt-in (if RPC too complex)
 
     for funder in funders:
         # Filter: minimum contribution
@@ -719,11 +729,11 @@ CREATE (wallet:Wallet {address: $wallet_addr})
 |------------|----------------|------------|
 | 1. Discovery tokens | `core/discovery/` | `tokens` (Supabase) |
 | 2. Surveillance | `scheduler/`, `services/dexscreener/` | `tokens.last_checked` |
-| 3. Discovery wallets | `core/discovery/`, `services/helius/` | `wallets`, `Wallet` (Neo4j) |
+| 3. Discovery wallets | `core/discovery/`, `services/solana/` (RPC) | `wallets`, `Wallet` (Neo4j) |
 | 4. Profiling | `core/wallets/profiler.py` | `wallets.win_rate`, `wallets.behavioral_*` |
 | 5. Watchlist Management | `core/wallets/watchlist.py` | `wallets.wallet_status`, `config` |
 | 6. Clustering | `core/cluster/` | Neo4j edges, `wallets` (watchlist only) |
-| 7. Webhooks Helius | `api/webhooks/`, `services/helius/` | `webhooks` |
+| 7. Signal Detection | `scheduler/` (RPC polling) OR `api/webhooks/` (Helius opt-in) | `signals` |
 | 8. Scoring signals | `core/scoring/` | `signals` |
 | 9. Positions | `core/positions/` | `positions`, `trades` |
 | 10. Orders | `core/execution/`, `services/jupiter/` | `orders` |
@@ -864,12 +874,17 @@ Concepts à reprendre (pas les fichiers):
 
 **Config defaults pour V2:**
 ```
-scoring_weights: {"wallet": 0.30, "cluster": 0.25, "token": 0.25, "context": 0.20}
+scoring_weights: {"wallet": 0.50, "token": 0.50}
 score_threshold: 0.70
 high_conviction_threshold: 0.85
 drawdown_threshold_pct: 20.0
 max_concurrent_positions: 5
 ```
+
+**V2 Scoring Simplification:**
+- Cluster scoring removed (FUNDED_BY is organizational, not predictive)
+- Timing context merged into token characteristics (age is a token property)
+- Signal = 50% Wallet Quality × 50% Token Quality
 
 #### Gradio Patterns (Référence)
 

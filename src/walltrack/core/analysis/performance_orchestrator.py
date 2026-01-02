@@ -1,10 +1,14 @@
 """Performance analysis orchestration for wallet metrics calculation.
 
 This module coordinates the end-to-end flow of:
-1. Fetching transaction history from Helius
-2. Parsing transactions into SwapTransaction objects
-3. Calculating performance metrics
+1. Fetching transaction history from RPC (Story 3.2 RPC Migration)
+2. Parsing transactions into SwapTransaction objects (reuses Story 3.1 parser)
+3. Calculating performance metrics with configurable min_profit_percent
 4. Updating both Supabase and Neo4j databases
+
+RPC Migration (Story 3.2):
+- Before: Helius get_wallet_transactions() API
+- After: RPC getSignaturesForAddress() + getTransaction() (FREE)
 
 Example:
     # Analyze single wallet
@@ -20,12 +24,13 @@ from datetime import datetime
 import structlog
 
 from walltrack.core.analysis.performance_calculator import PerformanceCalculator
-from walltrack.core.analysis.transaction_parser import parse_swap_transaction
 from walltrack.data.models.transaction import SwapTransaction
 from walltrack.data.models.wallet import PerformanceMetrics
 from walltrack.data.neo4j.queries.wallet import update_wallet_performance_metrics as update_neo4j_metrics
+from walltrack.data.supabase.repositories.config_repo import ConfigRepository
 from walltrack.data.supabase.repositories.wallet_repo import WalletRepository
-from walltrack.services.helius.client import HeliusClient
+from walltrack.services.solana.rpc_client import SolanaRPCClient
+from walltrack.services.solana.transaction_parser import TransactionParser
 
 log = structlog.get_logger(__name__)
 
@@ -36,14 +41,21 @@ class PerformanceOrchestrator:
     Coordinates transaction fetching, parsing, calculation, and storage
     of performance metrics for wallets.
 
+    RPC Migration (Story 3.2):
+    - Uses SolanaRPCClient instead of HeliusClient (cost optimization)
+    - Reuses TransactionParser from Story 3.1 (same parser, wallet address)
+
     Attributes:
-        helius_client: Client for fetching transaction history.
+        rpc_client: Client for fetching transaction history via RPC (FREE).
+        config_repo: Repository for loading performance criteria.
         calculator: Engine for computing performance metrics.
+        parser: Transaction parser (shared with Story 3.1).
         wallet_repo: Repository for updating Supabase database.
 
     Example:
         orchestrator = PerformanceOrchestrator(
-            helius_client=helius_client,
+            rpc_client=rpc_client,
+            config_repo=config_repo,
             wallet_repo=wallet_repo
         )
         await orchestrator.analyze_wallet("wallet_address")
@@ -51,17 +63,21 @@ class PerformanceOrchestrator:
 
     def __init__(
         self,
-        helius_client: HeliusClient,
+        rpc_client: SolanaRPCClient,
+        config_repo: ConfigRepository,
         wallet_repo: WalletRepository,
     ):
         """Initialize orchestrator with required dependencies.
 
         Args:
-            helius_client: Configured Helius API client.
+            rpc_client: Configured Solana RPC client.
+            config_repo: Config repository for performance criteria.
             wallet_repo: Wallet repository for database updates.
         """
-        self.helius_client = helius_client
+        self.rpc_client = rpc_client
+        self.config_repo = config_repo
         self.calculator = PerformanceCalculator()
+        self.parser = TransactionParser()
         self.wallet_repo = wallet_repo
 
     async def analyze_wallet_performance(
@@ -71,12 +87,14 @@ class PerformanceOrchestrator:
     ) -> PerformanceMetrics:
         """Analyze performance metrics for a single wallet.
 
-        Complete workflow:
-        1. Fetch transaction history from Helius (SWAP transactions)
-        2. Parse transactions into SwapTransaction objects
-        3. Calculate performance metrics (win rate, PnL, entry delay)
-        4. Update Supabase database with metrics
-        5. Update Neo4j graph with metrics
+        Complete workflow (RPC Migration - Story 3.2):
+        1. Load performance criteria from config (min_profit_percent)
+        2. Fetch transaction signatures from RPC (getSignaturesForAddress)
+        3. Batch fetch transaction details with throttling (2 req/sec)
+        4. Parse transactions using shared TransactionParser (Story 3.1)
+        5. Calculate performance metrics with config-driven thresholds
+        6. Update Supabase database with metrics
+        7. Update Neo4j graph with metrics
 
         Args:
             wallet_address: Solana wallet address to analyze.
@@ -88,7 +106,7 @@ class PerformanceOrchestrator:
 
         Raises:
             ValueError: If wallet_address is invalid.
-            APIError: If Helius API call fails.
+            RPCError: If RPC call fails.
             DatabaseError: If database update fails.
 
         Example:
@@ -103,44 +121,78 @@ class PerformanceOrchestrator:
             wallet_address=wallet_address[:8] + "...",
         )
 
-        # Step 1: Fetch transaction history from Helius
-        log.debug("fetching_transactions_from_helius", wallet_address=wallet_address[:8] + "...")
+        # Step 1: Load performance criteria from config (AC7)
+        log.debug("loading_performance_criteria")
+        try:
+            criteria = await self.config_repo.get_performance_criteria()
+            min_profit_percent = criteria.get("min_profit_percent", 10.0)
+            log.debug("performance_criteria_loaded", min_profit_percent=min_profit_percent)
+        except Exception as e:
+            log.warning(
+                "performance_criteria_load_failed_using_default",
+                error=str(e),
+            )
+            min_profit_percent = 10.0  # AC2 default
+
+        # Load RPC rate limiting config (Story 3.5.5)
+        signatures_limit_value = await self.config_repo.get_value("profiling_signatures_limit")
+        signatures_limit = int(signatures_limit_value) if signatures_limit_value else 20
+
+        # Step 2: Fetch transaction signatures from RPC
+        log.debug(
+            "fetching_signatures_from_rpc",
+            wallet_address=wallet_address[:8] + "...",
+            limit=signatures_limit,
+        )
 
         try:
-            tx_response = await self.helius_client.get_wallet_transactions(
-                wallet_address=wallet_address,
-                limit=1000,  # Fetch up to 1000 SWAP transactions
-                tx_type="SWAP",
+            signatures_response = await self.rpc_client.getSignaturesForAddress(
+                address=wallet_address,
+                limit=signatures_limit,  # Configurable limit (Story 3.5.5)
             )
         except Exception as e:
             log.error(
-                "helius_fetch_failed",
+                "rpc_signatures_fetch_failed",
                 wallet_address=wallet_address[:8] + "...",
                 error=str(e),
             )
             raise
 
-        raw_transactions = tx_response if isinstance(tx_response, list) else []
+        signatures = [sig["signature"] for sig in signatures_response]
 
         log.debug(
-            "helius_transactions_fetched",
+            "rpc_signatures_fetched",
             wallet_address=wallet_address[:8] + "...",
-            count=len(raw_transactions),
+            count=len(signatures),
         )
 
-        # Step 2: Parse transactions into SwapTransaction objects
-        log.debug("parsing_transactions", count=len(raw_transactions))
+        # Step 3: Batch fetch transactions with throttling (2 req/sec - Story 3.1 pattern)
+        log.debug("fetching_transactions_details", count=len(signatures))
 
         transactions: list[SwapTransaction] = []
-        for raw_tx in raw_transactions:
+        for i, signature in enumerate(signatures):
             try:
-                swap_tx = parse_swap_transaction(raw_tx, wallet_address)
+                # Fetch transaction details
+                raw_tx = await self.rpc_client.getTransaction(signature)
+
+                if not raw_tx:
+                    log.debug("transaction_not_found", signature=signature[:8] + "...")
+                    continue
+
+                # Step 4: Parse using shared TransactionParser (Story 3.1)
+                swap_tx = self.parser.parse(raw_tx)
+
                 if swap_tx:
                     transactions.append(swap_tx)
+
+                # Throttling: 2 req/sec (Story 3.1 pattern)
+                if (i + 1) % 2 == 0:
+                    await asyncio.sleep(1.0)
+
             except Exception as e:
                 log.warning(
-                    "transaction_parse_failed",
-                    signature=raw_tx.get("signature", "unknown"),
+                    "transaction_fetch_parse_failed",
+                    signature=signature[:8] + "...",
                     error=str(e),
                 )
                 continue
@@ -148,17 +200,18 @@ class PerformanceOrchestrator:
         log.info(
             "transactions_parsed",
             wallet_address=wallet_address[:8] + "...",
-            total_raw=len(raw_transactions),
-            parsed=len(transactions),
+            total_signatures=len(signatures),
+            parsed_swaps=len(transactions),
         )
 
-        # Step 3: Calculate performance metrics
+        # Step 5: Calculate performance metrics with config-driven min_profit_percent
         log.debug("calculating_performance_metrics", transaction_count=len(transactions))
 
         try:
             metrics = self.calculator.calculate_metrics(
                 transactions=transactions,
                 token_launch_times=token_launch_times,
+                min_profit_percent=min_profit_percent,  # AC7: Use config value
             )
         except Exception as e:
             log.error(
@@ -175,9 +228,10 @@ class PerformanceOrchestrator:
             pnl_total=f"{metrics.pnl_total:.4f} SOL",
             total_trades=metrics.total_trades,
             confidence=metrics.confidence,
+            min_profit_threshold=f"{min_profit_percent}%",
         )
 
-        # Step 4: Update Supabase database
+        # Step 6: Update Supabase database
         log.debug("updating_supabase", wallet_address=wallet_address[:8] + "...")
 
         try:
@@ -193,7 +247,7 @@ class PerformanceOrchestrator:
             )
             raise
 
-        # Step 5: Update Neo4j graph
+        # Step 7: Update Neo4j graph
         log.debug("updating_neo4j", wallet_address=wallet_address[:8] + "...")
 
         try:
@@ -275,6 +329,8 @@ class PerformanceOrchestrator:
                         wallet_address=address,
                         token_launch_times=token_launch_times,
                     )
+                    # Add delay to respect Helius API rate limit (free tier)
+                    await asyncio.sleep(2.0)
                     return address, metrics
                 except Exception as e:
                     log.error(
@@ -282,6 +338,8 @@ class PerformanceOrchestrator:
                         wallet_address=address[:8] + "...",
                         error=str(e),
                     )
+                    # Add delay even on failure to avoid hammering the API
+                    await asyncio.sleep(2.0)
                     return address, None
 
         # Run analyses concurrently
@@ -308,17 +366,19 @@ class PerformanceOrchestrator:
 
 async def analyze_wallet_performance(
     wallet_address: str,
-    helius_client: HeliusClient,
+    rpc_client: SolanaRPCClient,
+    config_repo: ConfigRepository,
     wallet_repo: WalletRepository,
     token_launch_times: dict[str, datetime] | None = None,
 ) -> PerformanceMetrics:
-    """Convenience function to analyze a single wallet.
+    """Convenience function to analyze a single wallet (RPC Migration - Story 3.2).
 
     Creates an orchestrator instance and runs the analysis.
 
     Args:
         wallet_address: Solana wallet address to analyze.
-        helius_client: Configured Helius API client.
+        rpc_client: Configured Solana RPC client.
+        config_repo: Config repository for performance criteria.
         wallet_repo: Wallet repository for database updates.
         token_launch_times: Optional token launch time mapping.
 
@@ -328,12 +388,14 @@ async def analyze_wallet_performance(
     Example:
         metrics = await analyze_wallet_performance(
             wallet_address="9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin",
-            helius_client=helius_client,
+            rpc_client=rpc_client,
+            config_repo=config_repo,
             wallet_repo=wallet_repo,
         )
     """
     orchestrator = PerformanceOrchestrator(
-        helius_client=helius_client,
+        rpc_client=rpc_client,
+        config_repo=config_repo,
         wallet_repo=wallet_repo,
     )
 
@@ -344,17 +406,19 @@ async def analyze_wallet_performance(
 
 
 async def analyze_all_wallets(
-    helius_client: HeliusClient,
+    rpc_client: SolanaRPCClient,
+    config_repo: ConfigRepository,
     wallet_repo: WalletRepository,
     token_launch_times: dict[str, datetime] | None = None,
     max_concurrent: int = 5,
 ) -> dict[str, PerformanceMetrics]:
-    """Convenience function to analyze all wallets.
+    """Convenience function to analyze all wallets (RPC Migration - Story 3.2).
 
     Creates an orchestrator instance and runs bulk analysis.
 
     Args:
-        helius_client: Configured Helius API client.
+        rpc_client: Configured Solana RPC client.
+        config_repo: Config repository for performance criteria.
         wallet_repo: Wallet repository for database updates.
         token_launch_times: Optional token launch time mapping.
         max_concurrent: Maximum concurrent analyses.
@@ -364,13 +428,15 @@ async def analyze_all_wallets(
 
     Example:
         results = await analyze_all_wallets(
-            helius_client=helius_client,
+            rpc_client=rpc_client,
+            config_repo=config_repo,
             wallet_repo=wallet_repo,
             max_concurrent=3,
         )
     """
     orchestrator = PerformanceOrchestrator(
-        helius_client=helius_client,
+        rpc_client=rpc_client,
+        config_repo=config_repo,
         wallet_repo=wallet_repo,
     )
 

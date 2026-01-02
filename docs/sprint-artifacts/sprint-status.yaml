@@ -77,13 +77,15 @@ development_status:
 
   # Epic 3: Wallet Discovery & Profiling
   # Location: docs/sprint-artifacts/epic-3/
-  epic-3: in-progress
-  3-1-wallet-discovery-from-tokens: done  # CORRECTED 2025-12-30: All 20 code review issues resolved + validated (16/16 tests pass)
-  3-2-wallet-performance-analysis: done
-  3-3-wallet-behavioral-profiling: done  # COMPLETED 2025-12-30: All 8 tasks done, 4 ACs met, 54 new tests (376 total passing), UI + E2E complete
-  3-4-wallet-decay-detection: done  # COMPLETED 2025-12-30: All 5 tasks complete, 5 ACs met, migrations + models + service + repo + UI + tests
-  3-5-wallet-blacklist-watchlist-management: backlog
-  3-6-integration-e2e-validation: backlog
+  epic-3: in-progress  # RPC MIGRATION 2025-12-31: Stories 3.1-3.3 re-generated for RPC Public approach (cost optimization)
+  3-1-wallet-discovery-from-tokens: done  # COMPLETED 2026-01-01: All 8 tasks done, 26 unit tests passing, 10 E2E tests created, RPC Public implementation (cost optimization), config-driven discovery criteria
+  3-2-wallet-performance-analysis: done  # COMPLETED 2026-01-01: All 7 tasks done, 32 unit tests passing, 7 E2E tests created, RPC transaction history, config-driven min_profit_percent
+  3-3-wallet-behavioral-profiling: done  # COMPLETED 2026-01-01: All 7 tasks done, 39 unit tests passing, 8 E2E tests created, RPC migration complete, config-driven behavioral criteria, atomic database updates with rollback, code review fixes applied (6 issues fixed)
+  3-4-wallet-decay-detection: done  # COMPLETED 2026-01-01: RPC migration complete - HeliusClient → SolanaRPCClient, 11 unit tests passing, pattern reuse from Stories 3.1-3.2 (TransactionParser + FIFO matching), cost optimization achieved
+  3-5-wallet-blacklist-watchlist-management: done
+  3-5-5-global-rate-limiter-discovery-worker: done  # COMPLETED 2026-01-01: All 11 tasks done, 15 tests passing (5 unit rate limiter + 5 unit worker + 2 integration autonomous workflow + 3 integration rate limiter enforcement), Global RPC rate limiter singleton (2 req/sec shared across all workers), WalletDiscoveryWorker (120s polling, circuit breaker), UI cleanup (removed manual controls, consolidated criteria accordions), autonomous workflow validated (Token → Discovery → Profiling → Watchlist)
+  3-5-6-workers-status-monitoring: done  # COMPLETED 2026-01-01: All 4 tasks done, 22 unit tests + 5 integration tests passing, Status Bar extended with 3 workers (Discovery 120s, Profiling 60s, Decay 4h), Health icons (🟢 Green < 2×interval, 🟡 Yellow < 5×interval, 🔴 Red >= 5×interval or errors), Worker instances exposed in main.py as globals, Status tracking (last_run, processed_count, error_count, current_state) added to both workers, get_status() method implemented, decay scheduler status helper (placeholder for future automation), auto-refresh 30s
+  3-6-integration-e2e-validation: done  # COMPLETED 2025-12-31: 19 E2E tests (15 passing, 4 skipped), 10 integration tests, 8 bugs fixed, performance validated
   epic-3-retrospective: optional
 
   # Epic 4: Network Discovery & Clustering (FUNDED_BY Only)

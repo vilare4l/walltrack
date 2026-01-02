@@ -2,6 +2,8 @@
 
 This module provides the main orchestration logic for analyzing wallet behavior
 by combining position sizing, hold duration, and transaction patterns.
+
+Story 3.3 RPC Migration: Uses Solana RPC instead of Helius for transaction history.
 """
 
 from dataclasses import dataclass
@@ -19,7 +21,8 @@ from walltrack.core.behavioral.position_sizing import (
 )
 from walltrack.data.models.transaction import TransactionType
 from walltrack.data.supabase.repositories.config_repo import ConfigRepository
-from walltrack.services.helius.client import HeliusClient
+from walltrack.services.solana.rpc_client import SolanaRPCClient
+from walltrack.services.solana.transaction_parser import TransactionParser
 
 log = structlog.get_logger(__name__)
 
@@ -66,35 +69,38 @@ class BehavioralProfiler:
     Combines transaction history analysis, position sizing, and hold duration
     patterns to produce a comprehensive behavioral profile.
 
+    Story 3.3 RPC Migration: Uses RPC client instead of Helius for cost optimization.
+
     Attributes:
-        helius_client: HeliusClient for fetching transaction history.
+        rpc_client: SolanaRPCClient for fetching transaction history via RPC.
         config: ConfigRepository for threshold values.
 
     Example:
-        >>> profiler = BehavioralProfiler(helius_client, config)
+        >>> profiler = BehavioralProfiler(rpc_client, config)
         >>> profile = await profiler.analyze("9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin")
         >>> print(f"Wallet style: {profile.position_size_style}, {profile.hold_duration_style}")
     """
 
     def __init__(
         self,
-        helius_client: HeliusClient,
+        rpc_client: SolanaRPCClient,
         config: ConfigRepository,
     ) -> None:
         """Initialize profiler with dependencies.
 
         Args:
-            helius_client: HeliusClient instance for transaction fetching.
+            rpc_client: SolanaRPCClient instance for transaction fetching via RPC.
             config: ConfigRepository instance for threshold values.
         """
-        self.helius_client = helius_client
+        self.rpc_client = rpc_client
         self.config = config
+        self.parser = TransactionParser()
 
     async def analyze(self, wallet_address: str) -> BehavioralProfile | None:
         """Analyze wallet behavior and produce behavioral profile.
 
         Orchestrates the full behavioral profiling pipeline:
-        1. Fetch transaction history from Helius
+        1. Fetch transaction history from RPC (Story 3.3 RPC migration)
         2. Check minimum trade count (returns None if insufficient)
         3. Calculate position size metrics and classify
         4. Calculate hold duration metrics and classify
@@ -112,7 +118,7 @@ class BehavioralProfiler:
             Exception: If transaction fetching fails or analysis encounters errors.
 
         Example:
-            >>> profiler = BehavioralProfiler(helius_client, config)
+            >>> profiler = BehavioralProfiler(rpc_client, config)
             >>> profile = await profiler.analyze("9xQeWvG816bUx9EPjHmaT23yvVM2ZWbrrpZb9PusVFin")
             >>> if profile and profile.confidence == "high":
             ...     print(f"High confidence profile: {profile.position_size_style}")
@@ -122,13 +128,48 @@ class BehavioralProfiler:
             wallet_address=wallet_address[:8] + "...",
         )
 
-        # Step 1: Fetch transaction history
+        # Load RPC rate limiting config (Story 3.5.5)
+        signatures_limit_value = await self.config.get_value("profiling_signatures_limit")
+        signatures_limit = int(signatures_limit_value) if signatures_limit_value else 20
+
+        transactions_limit_value = await self.config.get_value("profiling_transactions_limit")
+        transactions_limit = int(transactions_limit_value) if transactions_limit_value else 20
+
+        # Step 1: Fetch transaction history via RPC (Story 3.3 RPC Migration)
         try:
-            transactions = await self.helius_client.get_wallet_transactions(
-                wallet_address=wallet_address
+            # Fetch transaction signatures (AC1)
+            signatures = await self.rpc_client.getSignaturesForAddress(
+                address=wallet_address,
+                limit=signatures_limit,
             )
+
+            log.debug(
+                "signatures_fetched",
+                wallet_address=wallet_address[:8] + "...",
+                signature_count=len(signatures),
+                transactions_to_fetch=min(len(signatures), transactions_limit),
+            )
+
+            # Fetch and parse each transaction (AC1 - reuse parser from Story 3.1)
+            # Limit to transactions_limit to reduce RPC calls (Story 3.5.5)
+            transactions = []
+            for sig_info in signatures[:transactions_limit]:
+                signature = sig_info.get("signature")
+                if not signature:
+                    continue
+
+                # Fetch full transaction
+                tx_data = await self.rpc_client.getTransaction(signature)
+                if not tx_data:
+                    continue
+
+                # Parse transaction
+                parsed = self.parser.parse(tx_data)
+                if parsed:
+                    transactions.append(parsed)
+
             log.info(
-                "transactions_fetched",
+                "transactions_parsed",
                 wallet_address=wallet_address[:8] + "...",
                 transaction_count=len(transactions),
             )

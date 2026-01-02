@@ -106,13 +106,14 @@ The entry point is **current action**, not history:
 
 ---
 
-## Architecture: 3 Pages + Sidebar
+## Architecture: 4 Pages + Sidebar
 
-**From 8 disconnected tabs → 3 coherent spaces:**
+**From 8 disconnected tabs → 4 coherent spaces:**
 
 | Space | Icon | Function | Main Content |
 |-------|------|----------|--------------|
 | **Home** | 🏠 | Instant synthesis | System status, P&L, alerts, active positions with drill-down |
+| **Tokens** | 🪙 | Discovery management | Token list, discovery trigger, surveillance configuration |
 | **Explorer** | 🔍 | Flow navigation | Signals → Wallets → Clusters with explanatory context |
 | **Config** | ⚙️ | Parameters | Scoring, thresholds, webhooks, system settings |
 
@@ -219,11 +220,12 @@ Signal (real-time) → "Why?" → Source wallet → "Why this one?" → Score + 
 **Design implication — Permanent status bar:**
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  🟢 Discovery: 2h ago (next: 4h)  │  143 wallets   │
-│  🟢 Signals: 12 today (last: 14:32)                │
-│  🟢 Webhooks: sync OK                              │
-└─────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────┐
+│  🟢 Discovery: 2h ago (next: 4h)  │  143 wallets           │
+│  🟢 Signals: 12 today (last: 14:32) [Mode: RPC Polling 10s]│
+│    OR                                                        │
+│  🟢 Signals: 12 today (last: 14:32) [Mode: Helius Webhooks]│
+└───────────────────────────────────────────────────────────────┘
 ```
 
 → Answers "is it alive?" without clicking.
@@ -306,7 +308,131 @@ Signal (real-time) → "Why?" → Source wallet → "Why this one?" → Score + 
 - Click any row → Sidebar with full context
 - Sidebar shows: origin discovery, metrics, cluster relations, signal history
 
-### Page 3: Config
+### Page 3: Tokens
+
+**Purpose:** Token discovery management and monitoring
+
+**Layout:** Main content + right sidebar (token details)
+
+**Components:**
+
+| Component | Type | Content |
+|-----------|------|---------|
+| **Token List** | Accordion (open) | Table with refresh button, showing all discovered tokens |
+| **Token Details Sidebar** | gr.Sidebar (right) | Opens on token row click, displays token info + action links |
+| **Discovery Settings** | Accordion (open) | Manual discovery trigger + status display |
+| **Surveillance Schedule** | Section | Enable/disable surveillance + interval configuration |
+
+**Token Table Columns:**
+
+| Column | Description | Format |
+|--------|-------------|--------|
+| Token | Token name | String |
+| Symbol | Token ticker | String |
+| Price | Current price USD | $0.000123 (adaptive decimals) |
+| Market Cap | Market capitalization | $1.2M (K/M/B suffix) |
+| Discovered | Discovery timestamp | YYYY-MM-DD HH:MM |
+| Wallets | Count of wallets trading this token | Integer |
+
+**Token Details Sidebar Content:**
+
+```markdown
+### {Token Name}
+**{SYMBOL}**
+
+---
+
+### 🔗 Actions
+
+[📊 **View on Dexscreener**](https://dexscreener.com/solana/{mint})
+[🐦 **View on Birdeye**](https://birdeye.so/token/{mint}?chain=solana)
+[🔍 **View on Solscan**](https://solscan.io/token/{mint})
+
+---
+
+#### Market Data
+| Field | Value |
+|-------|-------|
+| **Price** | $0.000123 |
+| **Market Cap** | $1.2M |
+| **24h Volume** | $350K |
+| **Liquidity** | $75K |
+
+#### Info
+| Field | Value |
+|-------|-------|
+| **Mint** | `abc12345...wxyz` (truncated) |
+| **Discovered** | 2025-12-29 14:32 |
+| **Last Checked** | 2025-12-31 10:15 |
+```
+
+**Discovery Settings Section:**
+
+| Element | Type | Function |
+|---------|------|----------|
+| Status Display | gr.Textbox | Shows "Ready" / "Running..." / "Complete (X tokens)" |
+| Run Discovery | gr.Button | Manual trigger for token discovery from DexScreener |
+
+**Surveillance Schedule Section:**
+
+| Element | Type | Function |
+|---------|------|----------|
+| Enable Surveillance | gr.Checkbox | Toggle automatic surveillance on/off |
+| Refresh Interval | gr.Dropdown | Select interval: 1h, 2h, 4h (default), 8h |
+| Next Scheduled Run | gr.Textbox | Auto-updating countdown "in 2h 15m" |
+| Schedule Status | gr.Textbox | Feedback: "✅ Enabled" / "⏸️ Disabled" |
+
+**Interactions:**
+
+- Click token row → Sidebar opens with full token details
+- Click external link → Opens Dexscreener/Birdeye/Solscan in new tab
+- Click "Refresh" → Reloads token list from database
+- Click "Run Discovery" → Fetches new tokens from DexScreener
+- Change surveillance toggle → Enables/disables scheduler immediately
+- Change interval → Reschedules surveillance job with new interval
+
+**Design Rationale:**
+
+| Decision | Reasoning |
+|----------|-----------|
+| **No discovery criteria** | Smart wallets enter BEFORE metrics are good. Filtering would miss early signals. Criteria applied later in signal scoring (Epic 5). |
+| **External links only** | Token analysis happens on specialized platforms (Dexscreener, Birdeye). No need to duplicate in WallTrack. |
+| **Real-time countdown** | "Next run: in 2h 15m" is clearer than absolute timestamp for monitoring |
+| **Separate from Explorer** | Token discovery is operational (run/configure), not exploratory. Dedicated page reduces Explorer clutter. |
+
+**Technical Implementation:**
+
+```python
+# Page structure
+with gr.Column():
+    # Token details sidebar (right)
+    with gr.Sidebar(position="right", open=False):
+        token_detail_display = gr.Markdown()
+
+    # Token List Section
+    with gr.Accordion("Token List", open=True):
+        refresh_btn = gr.Button("🔄 Refresh")
+        tokens_table = gr.Dataframe(
+            headers=["Token", "Symbol", "Price", "Market Cap", "Discovered", "Wallets"],
+            interactive=False
+        )
+
+    # Discovery Settings Section
+    with gr.Accordion("Discovery Settings", open=True):
+        discovery_status = gr.Textbox(label="Status")
+        run_discovery_btn = gr.Button("Run Discovery")
+
+        # Surveillance Schedule
+        surveillance_enabled = gr.Checkbox(label="Enable Surveillance")
+        interval_dropdown = gr.Dropdown(
+            choices=[("1 hour", 1), ("4 hours (recommended)", 4), ("8 hours", 8)]
+        )
+        next_run_display = gr.Textbox(label="Next Scheduled Run", every=30)
+```
+
+---
+
+### Page 4: Config
 
 **Purpose:** System configuration
 
@@ -318,8 +444,29 @@ Signal (real-time) → "Why?" → Source wallet → "Why this one?" → Score + 
 | **Scoring** | Threshold, Weights (Wallet 35%, Cluster 25%, Token 25%, Timing 15%) |
 | **Position Sizing** | Base size, High conviction multiplier (1.5x) |
 | **Circuit Breakers** | Drawdown limit (20%), Consecutive loss action |
-| **Webhooks** | Helius status, Sync button |
-| **Discovery** | Last run, Manual trigger, Schedule |
+| **Signal Detection** | Mode selector: RPC Polling (default) / Helius Webhooks (opt-in) |
+| **RPC Polling Config** | Interval (10s), Watchlist size, Last poll timestamp |
+| **Helius Webhooks** | API key input, Status, Sync button (only if Webhooks selected) |
+
+### Config Page - Signal Detection Mode UI
+
+```
+┌─────────────────────────────────────────┐
+│ Signal Detection                        │
+├─────────────────────────────────────────┤
+│ Mode: ◉ RPC Polling (Free)             │
+│       ○ Helius Webhooks (Premium)      │
+│                                         │
+│ [If RPC Polling]                        │
+│ Interval: [10] seconds                  │
+│ Last Poll: 2s ago                       │
+│                                         │
+│ [If Helius Webhooks]                    │
+│ API Key: [********************]        │
+│ Status: 🟢 Active                       │
+│ [Sync] button                           │
+└─────────────────────────────────────────┘
+```
 
 ---
 
@@ -413,6 +560,7 @@ with gr.Blocks(theme=gr.themes.Soft()) as app:
     # Global navbar
     gr.Navbar(main_page_name="WallTrack", value=[
         ("Home", "/"),
+        ("Tokens", "/tokens"),
         ("Explorer", "/explorer"),
         ("Config", "/config"),
     ])
@@ -442,6 +590,32 @@ def home_page():
     with gr.Row():
         # Recent signals
         signals_feed = gr.Dataframe(elem_id="signals-feed")
+
+@app.route("/tokens")
+def tokens_page():
+    with gr.Sidebar(position="right", open=False) as token_sidebar:
+        token_detail_display = gr.Markdown("*Select a token to view details*")
+
+    with gr.Accordion("Token List", open=True):
+        refresh_btn = gr.Button("🔄 Refresh")
+        tokens_table = gr.Dataframe(
+            headers=["Token", "Symbol", "Price", "Market Cap", "Discovered", "Wallets"],
+            elem_id="tokens-table"
+        )
+        tokens_table.select(fn=show_token_context, outputs=[token_sidebar, token_detail_display])
+
+    with gr.Accordion("Discovery Settings", open=True):
+        discovery_status = gr.Textbox(label="Status", value="Ready")
+        run_discovery_btn = gr.Button("Run Discovery", variant="primary")
+
+        # Surveillance Schedule
+        surveillance_enabled = gr.Checkbox(label="Enable Surveillance")
+        interval_dropdown = gr.Dropdown(
+            choices=[("1 hour", 1), ("4 hours (recommended)", 4), ("8 hours", 8)],
+            value=4,
+            label="Refresh Interval"
+        )
+        next_run_display = gr.Textbox(label="Next Scheduled Run", every=30)
 
 @app.route("/explorer")
 def explorer_page():
@@ -573,6 +747,31 @@ Sees: "Win rate dropped to 38% over last 20 trades"
 Decision: [Blacklist] or wait
 ```
 
+### Journey 4: Token Discovery Management
+
+```
+Navbar → Tokens
+        ↓
+Sees token list with current discoveries
+        ↓
+Clicks "Run Discovery"
+        ↓
+Status: "🔄 Running discovery..."
+        ↓
+Status updates: "✅ Complete: 5 tokens (3 new, 2 updated)"
+        ↓
+Token list refreshes automatically
+        ↓
+Optional: Click token row → Sidebar opens
+        ↓
+Sees: Market data + Links to Dexscreener/Birdeye/Solscan
+        ↓
+Optional: Adjust surveillance schedule
+  - Toggle enable/disable
+  - Change interval (1h, 4h, 8h)
+  - Sees "Next run: in 2h 15m"
+```
+
 ---
 
 ## Alignment with PRD
@@ -581,7 +780,7 @@ Decision: [Blacklist] or wait
 
 | Phase | UX Support |
 |-------|------------|
-| **Phase 1: Discovery** | Explorer tab (Wallets, Clusters), Discovery status in status bar |
+| **Phase 1: Discovery** | **Tokens page** (discovery trigger, surveillance config), Explorer tab (Wallets, Clusters), Discovery status in status bar |
 | **Phase 2: Signal Pipeline** | Signals tab, Home positions, Drill-down context |
 | **Phase 3: Order Management** | Home positions with P&L, Config for exit strategies |
 | **Phase 4: Live** | Mode toggle in Config, visual distinction Live vs Simulation |
@@ -590,8 +789,8 @@ Decision: [Blacklist] or wait
 
 | Feature | Where visible |
 |---------|---------------|
-| Token Discovery | Status bar "Discovery: Xh ago" |
-| Token Surveillance | Status bar "next: Xh" |
+| Token Discovery | **Tokens page** (Run Discovery button, token list) + Status bar "Discovery: Xh ago" |
+| Token Surveillance | **Tokens page** (Surveillance schedule section) + Status bar "next: Xh" |
 | Wallet Discovery | Explorer → Wallets tab |
 | Wallet Profiling | Sidebar wallet context (score, metrics) |
 | **Wallet Decay Detection** | Wallets table Decay column + Sidebar |
@@ -618,7 +817,8 @@ Decision: [Blacklist] or wait
 | Component | Why critical |
 |-----------|--------------|
 | Status bar auto-refresh | "Is it alive?" |
-| Navbar 3 pages | Core navigation |
+| Navbar 4 pages | Core navigation (Home, Tokens, Explorer, Config) |
+| **Tokens page** | Operational control for discovery & surveillance |
 | Sidebar drill-down | Core experience |
 | Clickable tables | Entry point for context |
 | Decay column in Wallets | Wallet health visibility |
@@ -637,9 +837,10 @@ Decision: [Blacklist] or wait
 ## Document Status
 
 **UX Design Specification - WallTrack**
-- Date: 2025-12-28
+- Date: 2025-12-28 (Updated: 2025-12-31)
 - Author: Christophe + Sally (UX Designer)
 - Status: Complete
 - Aligned with: PRD (4 phases, 11 features)
+- **Update 2025-12-31:** Added Page 3 (Tokens) - Dedicated token discovery management page
 
 Ready for wireframe creation.

@@ -522,6 +522,170 @@ class TestFIFOMatching:
         assert metrics.pnl_total == 0.5  # 1.5 - 1.0
 
 
+class TestMinProfitThreshold:
+    """Tests for min_profit_percent threshold (AC2 & AC7)."""
+
+    def test_win_rate_with_10_percent_threshold(
+        self, calculator, sample_wallet_address, sample_token_mint
+    ):
+        """Test win rate with 10% profit threshold (AC2)."""
+        # Arrange - Trade 1: +15% profit (WIN), Trade 2: +5% profit (LOSS - below threshold)
+        transactions = [
+            # Trade 1: BUY 1.0 -> SELL 1.15 = +15% (WIN)
+            SwapTransaction(
+                signature="sig1",
+                timestamp=1703001000,
+                tx_type=TransactionType.BUY,
+                token_mint=sample_token_mint,
+                sol_amount=1.0,
+                token_amount=1000000,
+                wallet_address=sample_wallet_address,
+            ),
+            SwapTransaction(
+                signature="sig2",
+                timestamp=1703002000,
+                tx_type=TransactionType.SELL,
+                token_mint=sample_token_mint,
+                sol_amount=1.15,
+                token_amount=1000000,
+                wallet_address=sample_wallet_address,
+            ),
+            # Trade 2: BUY 2.0 -> SELL 2.1 = +5% (LOSS - below 10% threshold)
+            SwapTransaction(
+                signature="sig3",
+                timestamp=1703003000,
+                tx_type=TransactionType.BUY,
+                token_mint="TokenMint2XXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+                sol_amount=2.0,
+                token_amount=2000000,
+                wallet_address=sample_wallet_address,
+            ),
+            SwapTransaction(
+                signature="sig4",
+                timestamp=1703004000,
+                tx_type=TransactionType.SELL,
+                token_mint="TokenMint2XXXXXXXXXXXXXXXXXXXXXXXXXXXX",
+                sol_amount=2.1,
+                token_amount=2000000,
+                wallet_address=sample_wallet_address,
+            ),
+        ]
+
+        # Act
+        metrics = calculator.calculate_metrics(
+            transactions=transactions,
+            min_profit_percent=10.0,  # AC2: 10% threshold
+        )
+
+        # Assert
+        assert metrics.win_rate == 50.0, "Only trade with >10% profit should count as win"
+        assert metrics.total_trades == 2, "Both trades closed"
+        # PnL should still reflect actual profit (+0.15 + 0.1 = +0.25)
+        assert metrics.pnl_total == pytest.approx(0.25)
+
+    def test_win_rate_exactly_at_threshold(
+        self, calculator, sample_wallet_address, sample_token_mint
+    ):
+        """Test trade exactly at 10% threshold (should be WIN)."""
+        # Arrange - BUY 1.0 -> SELL 1.1 = exactly 10%
+        transactions = [
+            SwapTransaction(
+                signature="sig1",
+                timestamp=1703001000,
+                tx_type=TransactionType.BUY,
+                token_mint=sample_token_mint,
+                sol_amount=1.0,
+                token_amount=1000000,
+                wallet_address=sample_wallet_address,
+            ),
+            SwapTransaction(
+                signature="sig2",
+                timestamp=1703002000,
+                tx_type=TransactionType.SELL,
+                token_mint=sample_token_mint,
+                sol_amount=1.1,
+                token_amount=1000000,
+                wallet_address=sample_wallet_address,
+            ),
+        ]
+
+        # Act
+        metrics = calculator.calculate_metrics(
+            transactions=transactions,
+            min_profit_percent=10.0,
+        )
+
+        # Assert - Exactly 10% should count as WIN
+        assert metrics.win_rate == 100.0, "Trade at exactly 10% profit should be WIN"
+
+    def test_custom_profit_threshold(
+        self, calculator, sample_wallet_address, sample_token_mint
+    ):
+        """Test with custom min_profit_percent value (AC7)."""
+        # Arrange - BUY 1.0 -> SELL 1.2 = 20% profit
+        transactions = [
+            SwapTransaction(
+                signature="sig1",
+                timestamp=1703001000,
+                tx_type=TransactionType.BUY,
+                token_mint=sample_token_mint,
+                sol_amount=1.0,
+                token_amount=1000000,
+                wallet_address=sample_wallet_address,
+            ),
+            SwapTransaction(
+                signature="sig2",
+                timestamp=1703002000,
+                tx_type=TransactionType.SELL,
+                token_mint=sample_token_mint,
+                sol_amount=1.2,
+                token_amount=1000000,
+                wallet_address=sample_wallet_address,
+            ),
+        ]
+
+        # Act - Use 25% threshold
+        metrics = calculator.calculate_metrics(
+            transactions=transactions,
+            min_profit_percent=25.0,
+        )
+
+        # Assert - 20% profit < 25% threshold = LOSS
+        assert metrics.win_rate == 0.0, "20% profit < 25% threshold should be LOSS"
+
+    def test_default_threshold_backwards_compatible(
+        self, calculator, sample_wallet_address, sample_token_mint
+    ):
+        """Test that omitting min_profit_percent uses default (0% - any positive profit)."""
+        # Arrange - BUY 1.0 -> SELL 1.01 = 1% profit
+        transactions = [
+            SwapTransaction(
+                signature="sig1",
+                timestamp=1703001000,
+                tx_type=TransactionType.BUY,
+                token_mint=sample_token_mint,
+                sol_amount=1.0,
+                token_amount=1000000,
+                wallet_address=sample_wallet_address,
+            ),
+            SwapTransaction(
+                signature="sig2",
+                timestamp=1703002000,
+                tx_type=TransactionType.SELL,
+                token_mint=sample_token_mint,
+                sol_amount=1.01,
+                token_amount=1000000,
+                wallet_address=sample_wallet_address,
+            ),
+        ]
+
+        # Act - No min_profit_percent provided (backwards compat)
+        metrics = calculator.calculate_metrics(transactions=transactions)
+
+        # Assert - Any positive profit should be WIN (default behavior)
+        assert metrics.win_rate == 100.0, "Without threshold, any positive PnL should be WIN"
+
+
 class TestEntryDelayEdgeCases:
     """Tests for entry delay calculation edge cases."""
 

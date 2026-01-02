@@ -1,7 +1,11 @@
 """Wallet discovery service for extracting smart money wallets from early profitable buyers.
 
 This module provides functionality to discover wallet addresses from token transactions
-by analyzing early profitable buyers via Helius transaction history API.
+by analyzing early profitable buyers.
+
+Two implementations:
+1. Helius Enhanced API (legacy, paid)
+2. Solana RPC Public (new, free) - Story 3.1 migration
 
 Approach: Find wallets that bought within 30min of token launch AND sold with >50% profit.
 This identifies "smart money" - traders who captured the pump, not bag holders.
@@ -15,12 +19,16 @@ from datetime import UTC, datetime
 import structlog
 
 from walltrack.data.models.token import Token
+from walltrack.data.models.transaction import SwapTransaction, TransactionType
 from walltrack.data.models.wallet import WalletCreate
 from walltrack.data.neo4j.services.wallet_sync import sync_wallet_to_neo4j
 from walltrack.data.repositories.wallet_repository import WalletRepository
+from walltrack.data.supabase.repositories.config_repo import ConfigRepository
 from walltrack.data.supabase.repositories.token_repo import TokenRepository
 from walltrack.services.helius.client import HeliusClient
 from walltrack.services.helius.models import SwapDetails, Transaction
+from walltrack.services.solana.rpc_client import SolanaRPCClient
+from walltrack.services.solana.transaction_parser import TransactionParser
 
 log = structlog.get_logger(__name__)
 
@@ -57,43 +65,66 @@ class WalletDiscoveryService:
     def __init__(
         self,
         helius_client: HeliusClient | None = None,
+        rpc_client: SolanaRPCClient | None = None,
+        parser: TransactionParser | None = None,
         wallet_repository: WalletRepository | None = None,
         token_repository: TokenRepository | None = None,
+        config_repository: ConfigRepository | None = None,  # Story 3.1 Task 4b
         max_transactions: int = 5000,  # FIXED: Configurable instead of hardcoded 1000
-        early_window_minutes: int = 30,  # FIXED: Configurable early entry window
-        min_profit_ratio: float = 0.50,  # FIXED: Configurable minimum profit (50%)
+        early_window_minutes: int = 30,  # FIXED: Configurable early entry window (fallback)
+        min_profit_ratio: float = 0.50,  # FIXED: Configurable minimum profit (fallback)
     ) -> None:
         """Initialize wallet discovery service.
 
         Args:
-            helius_client: Optional Helius client (creates default if None).
+            helius_client: Optional Helius client (legacy implementation).
+            rpc_client: Optional RPC client for Story 3.1 (creates default if None).
+            parser: Optional TransactionParser for Story 3.1 (creates default if None).
             wallet_repository: Optional wallet repo (creates default if None).
             token_repository: Optional token repo (will be created lazily if None).
-            max_transactions: Max transactions to fetch from Helius (default: 5000,
-                             capped at 1000 due to Helius API limit).
-            early_window_minutes: Early entry window in minutes (default: 30).
-            min_profit_ratio: Minimum profit ratio to qualify (default: 0.50 = 50%).
+            config_repository: Optional config repo for loading discovery criteria (Story 3.1 Task 4b).
+            max_transactions: Max transactions to fetch (default: 5000,
+                             capped at 1000 for Helius, no cap for RPC).
+            early_window_minutes: Early entry window fallback (default: 30).
+                                 Overridden by config if config_repository is provided.
+            min_profit_ratio: Minimum profit ratio fallback (default: 0.50 = 50%).
+                             Overridden by config if config_repository is provided.
 
         Note:
-            - max_transactions is automatically capped at 1000 (Helius API limit)
-            - Helius API has rate limits, consider pagination for very popular tokens
-            - Business logic (early_window, min_profit) is now configurable
+            - Two implementations: Helius (legacy) and RPC Public (Story 3.1)
+            - Business logic (early_window, min_profit) loaded from config if available
+            - Falls back to constructor params if config not available
         """
+        # Legacy Helius implementation
         self.helius_client = helius_client or HeliusClient()
+
+        # NEW: RPC Public implementation (Story 3.1)
+        self.rpc_client = rpc_client or SolanaRPCClient()
+        self.parser = parser or TransactionParser()
+
         self.wallet_repository = wallet_repository or WalletRepository()
         self._token_repository = token_repository
-        
+        self._config_repository = config_repository  # Story 3.1 Task 4b
+
         # FIXED: Configurable business logic parameters
         # Cap max_transactions at 1000 (Helius API limit)
         self.max_transactions = min(max_transactions, 1000)
-        self.early_window_minutes = early_window_minutes
-        self.min_profit_ratio = min_profit_ratio
-        
+
+        # Story 3.1 Task 4b: Discovery criteria (fallback values)
+        # These will be overridden by config values if config_repository is provided
+        self._fallback_early_window_minutes = early_window_minutes
+        self._fallback_min_profit_ratio = min_profit_ratio
+
+        # Cache for loaded criteria (Story 3.1 Task 4b)
+        self._criteria_cache: dict[str, float] | None = None
+
         log.debug(
             "wallet_discovery_service_initialized",
             max_transactions=self.max_transactions,  # Log capped value
             early_window_minutes=early_window_minutes,
             min_profit_ratio=min_profit_ratio,
+            has_config_repo=config_repository is not None,
+            mode="helius+rpc",
         )
 
     async def _get_token_repository(self) -> TokenRepository:
@@ -109,6 +140,55 @@ class WalletDiscoveryService:
             self._token_repository = TokenRepository(supabase_client)
             log.debug("token_repository_initialized_lazily")
         return self._token_repository
+
+    async def _get_discovery_criteria(self) -> dict[str, float]:
+        """Get discovery criteria from config or fallback values.
+
+        Story 3.1 Task 4b: Load criteria from config table if config_repository is provided.
+        Otherwise, use fallback values from constructor.
+
+        Returns:
+            Dictionary with 'early_entry_minutes' and 'min_profit_percent' keys.
+
+        Note:
+            - Caches criteria after first load
+            - Cache is shared for all discovery calls
+        """
+        # Return cached criteria if already loaded
+        if self._criteria_cache is not None:
+            return self._criteria_cache
+
+        # Load from config if available
+        if self._config_repository is not None:
+            try:
+                criteria = await self._config_repository.get_discovery_criteria()
+                self._criteria_cache = criteria
+                log.info(
+                    "discovery_criteria_loaded_from_config",
+                    early_entry_minutes=criteria["early_entry_minutes"],
+                    min_profit_percent=criteria["min_profit_percent"],
+                )
+                return criteria
+            except Exception as e:
+                log.warning(
+                    "discovery_criteria_load_failed_using_fallback",
+                    error=str(e),
+                    fallback_early_minutes=self._fallback_early_window_minutes,
+                    fallback_profit_ratio=self._fallback_min_profit_ratio,
+                )
+
+        # Use fallback values from constructor
+        criteria = {
+            "early_entry_minutes": float(self._fallback_early_window_minutes),
+            "min_profit_percent": self._fallback_min_profit_ratio * 100,  # Convert ratio to percent
+        }
+        self._criteria_cache = criteria
+        log.debug(
+            "discovery_criteria_using_fallback",
+            early_entry_minutes=criteria["early_entry_minutes"],
+            min_profit_percent=criteria["min_profit_percent"],
+        )
+        return criteria
 
     async def discover_wallets_from_token(
         self,
@@ -202,6 +282,17 @@ class WalletDiscoveryService:
 
         token_launch_timestamp = int(token_launch_dt.timestamp())
 
+        # Load discovery criteria from config (Story 3.1 Task 4b)
+        criteria = await self._get_discovery_criteria()
+        early_window_minutes = criteria["early_entry_minutes"]
+        min_profit_ratio = criteria["min_profit_percent"] / 100.0  # Convert percent to ratio
+
+        log.debug(
+            "discovery_criteria_loaded_helius",
+            early_window_minutes=early_window_minutes,
+            min_profit_percent=criteria["min_profit_percent"],
+        )
+
         # Fetch swap transactions for this token
         # FIXED: Use configurable max_transactions instead of hardcoded 1000
         transactions_data = await self.helius_client.get_token_transactions(
@@ -284,9 +375,9 @@ class WalletDiscoveryService:
             earliest_buy = min(buy_swaps, key=lambda s: s.timestamp)
 
             # Filter #1: Early Entry (configurable window after token launch)
-            # FIXED: Use configurable early_window_minutes instead of hardcoded 30
+            # FIXED: Use config-loaded early_window_minutes instead of hardcoded value
             time_since_launch = earliest_buy.timestamp - token_launch_timestamp
-            early_window_seconds = self.early_window_minutes * 60
+            early_window_seconds = early_window_minutes * 60
 
             if time_since_launch > early_window_seconds:
                 log.debug(
@@ -318,10 +409,10 @@ class WalletDiscoveryService:
                 continue
 
             # Filter #2b: Profitable Exit (configurable minimum profit)
-            # FIXED: Use configurable min_profit_ratio instead of hardcoded 0.50
+            # FIXED: Use config-loaded min_profit_ratio instead of hardcoded value
             profit_ratio = (total_sell_sol - total_buy_sol) / total_buy_sol
 
-            if profit_ratio < self.min_profit_ratio:
+            if profit_ratio < min_profit_ratio:
                 log.debug(
                     "wallet_filtered_insufficient_profit",
                     wallet_address=wallet_address[:8] + "...",
@@ -343,6 +434,288 @@ class WalletDiscoveryService:
             token_address=token_address[:8] + "...",
             total_wallets=len(wallet_swaps),
             profitable_buyers=len(profitable_buyers),
+        )
+
+        return profitable_buyers
+
+    async def discover_wallets_from_token_rpc(
+        self,
+        token_address: str,
+        token_created_at: str,
+        limit: int = 1000,
+    ) -> list[str]:
+        """Discover early profitable buyer wallets using Solana RPC Public API.
+
+        NEW: RPC Public implementation for Story 3.1 (cost optimization).
+        Replaces Helius Enhanced API with manual transaction parsing.
+
+        Approach:
+            1. Fetch transaction signatures via getSignaturesForAddress()
+            2. Batch fetch transaction details via getTransaction()
+            3. Parse each transaction using TransactionParser (shared component)
+            4. Group swaps by wallet address
+            5. Apply filters: early entry (<30min) + profitable exit (>50%)
+            6. Return smart money wallet addresses
+
+        Args:
+            token_address: Solana token mint address (base58 format).
+            token_created_at: Token launch timestamp (ISO format).
+            limit: Maximum signatures to fetch (default: 1000).
+
+        Returns:
+            List of wallet addresses (early profitable buyers).
+            Returns empty list if no profitable buyers found.
+
+        Note:
+            - Uses RPC Public (free, 240 req/min = 4 req/sec)
+            - Rate limited to 2 req/sec (safety margin)
+            - Retries automatically on 429 errors
+            - Manual transaction parsing (no Helius pre-parsed data)
+        """
+        log.info(
+            "discovering_early_profitable_buyers_rpc",
+            token_address=token_address[:8] + "...",
+            limit=limit,
+        )
+
+        # Step 0: Load discovery criteria from config (Story 3.1 Task 4b)
+        criteria = await self._get_discovery_criteria()
+        early_window_minutes = criteria["early_entry_minutes"]
+        min_profit_ratio = criteria["min_profit_percent"] / 100.0  # Convert percent to ratio
+
+        log.debug(
+            "discovery_criteria_loaded_rpc",
+            early_window_minutes=early_window_minutes,
+            min_profit_percent=criteria["min_profit_percent"],
+        )
+
+        # Step 1: Fetch transaction signatures for this token
+        signatures_data = await self.rpc_client.getSignaturesForAddress(
+            address=token_address,
+            limit=limit,
+        )
+
+        if not signatures_data:
+            log.debug(
+                "no_signatures_found_rpc",
+                token_address=token_address[:8] + "...",
+            )
+            return []
+
+        log.debug(
+            "fetched_signatures_rpc",
+            token_address=token_address[:8] + "...",
+            count=len(signatures_data),
+        )
+
+        # Step 2: Batch fetch transaction details (throttled by RPC client)
+        swap_transactions: list[SwapTransaction] = []
+
+        for i, sig_data in enumerate(signatures_data):
+            signature = sig_data["signature"]
+
+            # Fetch full transaction
+            raw_tx = await self.rpc_client.getTransaction(signature)
+
+            if not raw_tx:
+                log.debug(
+                    "transaction_not_found_rpc",
+                    signature=signature[:8] + "...",
+                )
+                continue
+
+            # Step 3: Parse transaction using shared TransactionParser
+            swap = self.parser.parse(raw_tx)
+
+            if swap:
+                swap_transactions.append(swap)
+
+            # Progress logging every 100 transactions
+            if (i + 1) % 100 == 0:
+                log.debug(
+                    "batch_fetch_progress",
+                    processed=i + 1,
+                    total=len(signatures_data),
+                    swaps_found=len(swap_transactions),
+                )
+
+        log.info(
+            "transactions_fetched_and_parsed_rpc",
+            token_address=token_address[:8] + "...",
+            total_transactions=len(signatures_data),
+            swaps_parsed=len(swap_transactions),
+        )
+
+        if not swap_transactions:
+            log.debug(
+                "no_swaps_found_rpc",
+                token_address=token_address[:8] + "...",
+            )
+            return []
+
+        # Step 4: Group swaps by wallet address
+        wallet_swaps: dict[str, dict[str, list[SwapTransaction]]] = {}
+
+        for swap in swap_transactions:
+            # Only process swaps for THIS token
+            if swap.token_mint != token_address:
+                continue
+
+            wallet_addr = swap.wallet_address
+
+            # Filter out program addresses
+            if wallet_addr in KNOWN_PROGRAM_ADDRESSES:
+                continue
+
+            # Initialize wallet entry
+            if wallet_addr not in wallet_swaps:
+                wallet_swaps[wallet_addr] = {"buys": [], "sells": []}
+
+            # Categorize by transaction type
+            if swap.tx_type == TransactionType.BUY:
+                wallet_swaps[wallet_addr]["buys"].append(swap)
+            elif swap.tx_type == TransactionType.SELL:
+                wallet_swaps[wallet_addr]["sells"].append(swap)
+
+        # Parse token launch timestamp
+        token_launch_dt = datetime.fromisoformat(token_created_at)
+        if token_launch_dt.tzinfo is None:
+            token_launch_dt = token_launch_dt.replace(tzinfo=UTC)
+        token_launch_timestamp = int(token_launch_dt.timestamp())
+
+        # Step 5: Apply early entry + profitable exit filters
+        profitable_buyers: list[str] = []
+
+        for wallet_address, swaps_by_type in wallet_swaps.items():
+            buy_swaps = swaps_by_type["buys"]
+            sell_swaps = swaps_by_type["sells"]
+
+            # Skip if no BUY or no SELL (incomplete trade)
+            if not buy_swaps or not sell_swaps:
+                log.debug(
+                    "wallet_skipped_incomplete_trade_rpc",
+                    wallet_address=wallet_address[:8] + "...",
+                    buys=len(buy_swaps),
+                    sells=len(sell_swaps),
+                )
+                continue
+
+            # Find earliest BUY timestamp
+            earliest_buy = min(buy_swaps, key=lambda s: s.timestamp)
+
+            # Filter #1: Early Entry (configurable window after token launch)
+            time_since_launch = earliest_buy.timestamp - token_launch_timestamp
+            early_window_seconds = early_window_minutes * 60
+
+            if time_since_launch > early_window_seconds:
+                log.debug(
+                    "wallet_filtered_late_entry_rpc",
+                    wallet_address=wallet_address[:8] + "...",
+                    minutes_after_launch=time_since_launch // 60,
+                )
+                continue
+
+            # Calculate total BUY and SELL amounts
+            total_buy_sol = sum(swap.sol_amount for swap in buy_swaps)
+            total_sell_sol = sum(swap.sol_amount for swap in sell_swaps)
+            total_tokens_bought = sum(swap.token_amount for swap in buy_swaps)
+            total_tokens_sold = sum(swap.token_amount for swap in sell_swaps)
+
+            # Safety check
+            if total_tokens_bought == 0 or total_buy_sol == 0:
+                continue
+
+            # Filter #2a: Check for complete or near-complete position exit (>90%)
+            sell_ratio = total_tokens_sold / total_tokens_bought
+
+            if sell_ratio < 0.90:
+                log.debug(
+                    "wallet_filtered_incomplete_exit_rpc",
+                    wallet_address=wallet_address[:8] + "...",
+                    sold_percent=int(sell_ratio * 100),
+                )
+                continue
+
+            # Filter #2b: Profitable Exit (configurable minimum profit)
+            profit_ratio = (total_sell_sol - total_buy_sol) / total_buy_sol
+
+            if profit_ratio < min_profit_ratio:
+                log.debug(
+                    "wallet_filtered_insufficient_profit_rpc",
+                    wallet_address=wallet_address[:8] + "...",
+                    profit_percent=int(profit_ratio * 100),
+                )
+                continue
+
+            # Wallet passed BOTH filters → early profitable buyer!
+            profitable_buyers.append(wallet_address)
+            log.debug(
+                "profitable_buyer_found_rpc",
+                wallet_address=wallet_address[:8] + "...",
+                minutes_after_launch=time_since_launch // 60,
+                profit_percent=int(profit_ratio * 100),
+            )
+
+        log.info(
+            "early_profitable_buyers_discovered_rpc",
+            token_address=token_address[:8] + "...",
+            total_wallets=len(wallet_swaps),
+            profitable_buyers=len(profitable_buyers),
+        )
+
+        # Step 6: Store discovered wallets to Supabase + Neo4j
+        wallets_stored = 0
+        storage_errors = 0
+
+        for wallet_address in profitable_buyers:
+            try:
+                # Create wallet in Supabase (idempotent - PRIMARY KEY prevents duplicates)
+                wallet_create = WalletCreate(
+                    wallet_address=wallet_address,
+                    token_source=token_address,
+                )
+
+                created_wallet = await self.wallet_repository.create_wallet(wallet_create)
+
+                if created_wallet:
+                    log.debug(
+                        "wallet_stored_supabase_rpc",
+                        wallet_address=wallet_address[:8] + "...",
+                        token_source=token_address[:8] + "...",
+                    )
+                else:
+                    log.debug(
+                        "wallet_already_exists_rpc",
+                        wallet_address=wallet_address[:8] + "...",
+                    )
+
+                # Sync to Neo4j (idempotent MERGE operation)
+                sync_result = await sync_wallet_to_neo4j(wallet_address)
+
+                if not sync_result:
+                    storage_errors += 1
+                    log.error(
+                        "neo4j_sync_failed_rpc",
+                        wallet_address=wallet_address[:8] + "...",
+                    )
+                else:
+                    wallets_stored += 1
+
+            except Exception as e:
+                storage_errors += 1
+                log.error(
+                    "wallet_storage_error_rpc",
+                    wallet_address=wallet_address[:8] + "...",
+                    error=str(e),
+                )
+                # Continue with next wallet (non-fatal)
+
+        log.info(
+            "wallets_stored_rpc",
+            token_address=token_address[:8] + "...",
+            discovered=len(profitable_buyers),
+            stored=wallets_stored,
+            errors=storage_errors,
         )
 
         return profitable_buyers

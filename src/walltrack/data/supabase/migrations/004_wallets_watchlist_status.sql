@@ -41,9 +41,37 @@ COMMENT ON COLUMN walltrack.wallets.watchlist_score IS 'Composite score (0.0000-
 COMMENT ON COLUMN walltrack.wallets.watchlist_reason IS 'Why wallet was watchlisted or ignored (e.g., "Failed: win_rate < 0.70")';
 COMMENT ON COLUMN walltrack.wallets.manual_override IS 'True if status was set manually (not by automatic evaluation)';
 
--- Verification queries
--- SELECT wallet_status, COUNT(*) FROM walltrack.wallets GROUP BY wallet_status;
--- SELECT * FROM walltrack.wallets WHERE wallet_status = 'watchlisted' LIMIT 5;
+-- Verification queries (Story 3.5 Issue #7)
+-- 1. Verify columns exist
+-- SELECT column_name, data_type, is_nullable, column_default
+-- FROM information_schema.columns
+-- WHERE table_schema = 'walltrack' AND table_name = 'wallets'
+--   AND column_name IN ('wallet_status', 'watchlist_score', 'watchlist_reason', 'watchlist_added_date', 'manual_override')
+-- ORDER BY column_name;
+-- Expected: 5 rows showing all watchlist columns
+
+-- 2. Verify indexes exist
+-- SELECT indexname, indexdef
+-- FROM pg_indexes
+-- WHERE schemaname = 'walltrack' AND tablename = 'wallets'
+--   AND indexname IN ('idx_wallets_status', 'idx_wallets_watchlist_score');
+-- Expected: 2 rows showing both indexes
+
+-- 3. Verify CHECK constraint exists
+-- SELECT conname, pg_get_constraintdef(oid)
+-- FROM pg_constraint
+-- WHERE conrelid = 'walltrack.wallets'::regclass
+--   AND conname LIKE '%wallet_status%';
+-- Expected: 1 row showing wallet_status CHECK constraint
+
+-- 4. Verify wallet status distribution
+-- SELECT wallet_status, COUNT(*) FROM walltrack.wallets GROUP BY wallet_status ORDER BY COUNT(*) DESC;
+-- Expected: Counts by status (should see 'profiled', 'watchlisted', 'ignored', etc.)
+
+-- 5. Verify watchlisted wallets sample
+-- SELECT wallet_address, wallet_status, watchlist_score, watchlist_reason, manual_override
+-- FROM walltrack.wallets WHERE wallet_status = 'watchlisted' LIMIT 5;
+-- Expected: Up to 5 watchlisted wallets with scores and reasons
 
 -- Rollback (commented)
 -- DROP INDEX IF EXISTS idx_wallets_status;

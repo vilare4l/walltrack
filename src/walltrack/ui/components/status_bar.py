@@ -43,6 +43,129 @@ def get_relative_time(dt: datetime) -> str:
         return f"{int(seconds / 86400)}d ago"
 
 
+def get_workers_status() -> dict:
+    """Get autonomous workers status for monitoring (Story 3.5.6).
+
+    Returns:
+        Dict with 'discovery', 'profiling', 'decay' keys.
+        Each contains: running, last_run, processed_count, error_count, current_state.
+    """
+    try:
+        import sys  # noqa: PLC0415
+
+        # Only access workers if main module is already loaded (avoid import during UI construction)
+        main_module = sys.modules.get("walltrack.main")
+        if not main_module:
+            # App not started yet, return stopped status
+            return {
+                "discovery": {"current_state": "stopped"},
+                "profiling": {"current_state": "stopped"},
+                "decay": {"current_state": "stopped"},
+            }
+
+        # Get all three workers status
+        discovery_status = None
+        if hasattr(main_module, "wallet_discovery_worker") and main_module.wallet_discovery_worker:
+            discovery_status = main_module.wallet_discovery_worker.get_status()
+
+        profiling_status = None
+        if hasattr(main_module, "wallet_profiling_worker") and main_module.wallet_profiling_worker:
+            profiling_status = main_module.wallet_profiling_worker.get_status()
+
+        decay_status = None
+        if hasattr(main_module, "wallet_decay_worker") and main_module.wallet_decay_worker:
+            decay_status = main_module.wallet_decay_worker.get_status()
+
+        return {
+            "discovery": discovery_status or {"current_state": "stopped"},
+            "profiling": profiling_status or {"current_state": "stopped"},
+            "decay": decay_status or {"current_state": "stopped"},
+        }
+    except Exception as e:
+        log.debug("workers_status_fetch_failed", error=str(e))
+        return {
+            "discovery": {"current_state": "unknown"},
+            "profiling": {"current_state": "unknown"},
+            "decay": {"current_state": "unknown"},
+        }
+
+
+def get_worker_health_icon(status: dict, poll_interval_seconds: int) -> str:
+    """Determine health icon for worker based on status (Story 3.5.6).
+
+    Args:
+        status: Worker status dict from get_status()
+        poll_interval_seconds: Expected poll interval (e.g., 120 for discovery)
+
+    Returns:
+        Icon string: "🟢" (healthy) | "🟡" (warning) | "🔴" (error)
+    """
+    state = status.get("current_state", "unknown")
+
+    # Red: Stopped, error, unknown, or not implemented
+    if state in ("stopped", "error", "unknown", "not_implemented"):
+        return "🔴"
+
+    # Red: Has errors in last run
+    if status.get("error_count", 0) > 0:
+        return "🔴"
+
+    # Check last run time
+    last_run = status.get("last_run")
+    if last_run:
+        now = datetime.now(UTC)
+        seconds_since = (now - last_run).total_seconds()
+
+        # Green: Last run within 2× poll interval
+        if seconds_since < poll_interval_seconds * 2:
+            return "🟢"
+
+        # Yellow: Last run within 5× poll interval
+        if seconds_since < poll_interval_seconds * 5:
+            return "🟡"
+
+        # Red: Last run > 5× poll interval (likely crashed)
+        return "🔴"
+
+    # Yellow: No last run yet (starting or idle)
+    return "🟡"
+
+
+def format_worker_status(status: dict, worker_name: str) -> str:
+    """Format worker status for display in Status Bar (Story 3.5.6).
+
+    Args:
+        status: Worker status dict
+        worker_name: "Discovery" | "Profiling" | "Decay"
+
+    Returns:
+        Compact status string (e.g., "5m ago (12 wallets)")
+    """
+    state = status.get("current_state", "unknown")
+
+    # Handle special states
+    if state == "stopped":
+        return "stopped"
+    if state == "error":
+        error_count = status.get("error_count", 0)
+        return f"error ({error_count} failures)"
+    if state == "unknown":
+        return "unavailable"
+    if state == "processing":
+        return "running..."
+
+    # For all workers, show last run + processed count
+    last_run = status.get("last_run")
+    if last_run:
+        relative = get_relative_time(last_run)
+        processed = status.get("processed_count", 0)
+        if processed > 0:
+            return f"{relative} ({processed})"
+        return f"{relative} (idle)"
+
+    return "idle"
+
+
 def get_trading_wallet_status() -> str | None:
     """Get trading wallet status for status bar display.
 
@@ -95,13 +218,13 @@ def get_wallet_count() -> int:
         Total number of wallets in database, 0 on error.
     """
     try:
-        from walltrack.data.repositories.wallet_repository import (  # noqa: PLC0415
+        from walltrack.data.supabase.repositories.wallet_repo import (  # noqa: PLC0415
             WalletRepository,
         )
 
         async def _get(client):
-            repo = WalletRepository(supabase_client=client.client)
-            wallets = await repo.list_wallets(limit=10000)  # Get all for count
+            repo = WalletRepository(client=client)
+            wallets = await repo.get_all(limit=10000)  # Get all for count
             return len(wallets)
 
         return run_async_with_client(_get)
@@ -227,6 +350,18 @@ def render_status_html() -> str:
     # Green if has wallets, Yellow if none
     wallets_icon = "\U0001F7E2" if wallet_count > 0 else "\U0001F7E1"
 
+    # Workers status (Story 3.5.6)
+    workers = get_workers_status()
+
+    discovery_worker_icon = get_worker_health_icon(workers["discovery"], poll_interval_seconds=120)
+    discovery_worker_text = format_worker_status(workers["discovery"], "Discovery")
+
+    profiling_icon = get_worker_health_icon(workers["profiling"], poll_interval_seconds=60)
+    profiling_text = format_worker_status(workers["profiling"], "Profiling")
+
+    decay_icon = get_worker_health_icon(workers["decay"], poll_interval_seconds=14400)
+    decay_text = format_worker_status(workers["decay"], "Decay")
+
     # Use CSS classes from tokens.css - no inline styles needed
     return f"""
     <div id="status-bar">
@@ -236,6 +371,9 @@ def render_status_html() -> str:
         <span>{discovery_icon} Tokens: {token_count}</span>
         <span>{wallets_icon} Wallets: {wallet_count}</span>
         <span>{discovery_icon} Discovery: {last_discovery} (next: {next_run})</span>
+        <span>{discovery_worker_icon} Discovery Worker: {discovery_worker_text}</span>
+        <span>{profiling_icon} Profiling Worker: {profiling_text}</span>
+        <span>{decay_icon} Decay: {decay_text}</span>
         <span>\U0001F7E2 Signals: 0 today</span>
     </div>
     """

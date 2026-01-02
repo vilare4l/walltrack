@@ -7,11 +7,13 @@ and dormancy tracking.
 Story 3.4 - Wallet Decay Detection
 """
 
+import asyncio
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+import httpx
 import structlog
 
 from walltrack.data.models.decay_event import DecayEvent, DecayEventCreate, DecayEventType
@@ -19,13 +21,17 @@ from walltrack.data.models.transaction import SwapTransaction, TransactionType
 from walltrack.data.models.wallet import Wallet
 from walltrack.data.supabase.repositories.config_repo import ConfigRepository
 from walltrack.data.supabase.repositories.wallet_repo import WalletRepository
-from walltrack.services.helius.client import HeliusClient
+from walltrack.services.solana.rpc_client import SolanaRPCClient
+from walltrack.services.solana.transaction_parser import TransactionParser
 
 log = structlog.get_logger(__name__)
 
 # Score bounds (AC: Score adjustment)
 MIN_SCORE = 0.1  # Never reduce below (wallet still viable)
 MAX_SCORE = 1.0  # Perfect score ceiling
+
+# Dormancy detection (AC4: Dormancy threshold)
+NO_ACTIVITY_DAYS = 9999  # Fallback for wallets with no activity date
 
 
 @dataclass
@@ -111,10 +117,10 @@ class DecayDetector:
     Attributes:
         config: DecayConfig loaded from database.
         wallet_repo: WalletRepository for wallet data operations.
-        helius_client: HeliusClient for fetching transaction history.
+        rpc_client: SolanaRPCClient for fetching transaction history via RPC Public.
 
     Example:
-        detector = DecayDetector(config, wallet_repo, helius_client)
+        detector = DecayDetector(config, wallet_repo, rpc_client)
         event = await detector.check_wallet_decay("9xQeWvG...")
         if event:
             print(f"Decay detected: {event.event_type}")
@@ -124,18 +130,18 @@ class DecayDetector:
         self,
         config: DecayConfig,
         wallet_repo: WalletRepository,
-        helius_client: HeliusClient,
+        rpc_client: SolanaRPCClient,
     ) -> None:
         """Initialize decay detector.
 
         Args:
             config: DecayConfig with detection parameters.
             wallet_repo: WalletRepository instance.
-            helius_client: HeliusClient instance.
+            rpc_client: SolanaRPCClient instance for RPC Public API.
         """
         self.config = config
         self.wallet_repo = wallet_repo
-        self.helius_client = helius_client
+        self.rpc_client = rpc_client
 
     async def check_wallet_decay(self, wallet_address: str) -> DecayEvent | None:
         """Check wallet for decay conditions and update status if changed.
@@ -160,10 +166,8 @@ class DecayDetector:
             log.warning("wallet_not_found", wallet_address=wallet_address[:8] + "...")
             return None
 
-        # Fetch recent transactions and match trades
-        transactions = await self.helius_client.get_swap_transactions(
-            wallet_address, limit=100
-        )
+        # Fetch recent transactions and match trades (RPC Migration)
+        transactions = await self._fetch_wallet_transactions(wallet_address)
         trades = self._match_trades(transactions)
 
         # Check if wallet has enough trades for analysis
@@ -250,6 +254,88 @@ class DecayDetector:
 
         return event
 
+    async def _fetch_wallet_transactions(
+        self, wallet_address: str
+    ) -> list[SwapTransaction]:
+        """Fetch and parse wallet transactions via RPC Public API.
+
+        Implements RPC migration pattern from Story 3.2:
+        1. Fetch signatures via getSignaturesForAddress
+        2. Batch fetch transactions with throttling (2 req/sec)
+        3. Parse using TransactionParser from Story 3.1
+
+        Args:
+            wallet_address: Solana wallet address.
+
+        Returns:
+            List of parsed SwapTransaction objects.
+        """
+        # Step 1: Fetch transaction signatures from RPC
+        log.debug("fetching_signatures_from_rpc", wallet_address=wallet_address[:8] + "...")
+
+        try:
+            signatures_response = await self.rpc_client.getSignaturesForAddress(
+                address=wallet_address,
+                limit=100,  # RPC max limit (Story 3.1 pattern)
+            )
+        except httpx.HTTPError as e:
+            log.error(
+                "rpc_signatures_fetch_failed",
+                wallet_address=wallet_address[:8] + "...",
+                error=str(e),
+            )
+            raise
+
+        signatures = [sig["signature"] for sig in signatures_response]
+
+        log.debug(
+            "rpc_signatures_fetched",
+            wallet_address=wallet_address[:8] + "...",
+            count=len(signatures),
+        )
+
+        # Step 2: Batch fetch transactions with throttling (2 req/sec - Story 3.1 pattern)
+        log.debug("fetching_transactions_details", count=len(signatures))
+
+        transactions: list[SwapTransaction] = []
+        parser = TransactionParser()
+
+        for i, signature in enumerate(signatures):
+            try:
+                # Fetch transaction details
+                raw_tx = await self.rpc_client.getTransaction(signature)
+
+                if not raw_tx:
+                    log.debug("transaction_not_found", signature=signature[:8] + "...")
+                    continue
+
+                # Step 3: Parse using shared TransactionParser (Story 3.1)
+                swap_tx = parser.parse(raw_tx)
+
+                if swap_tx and swap_tx.tx_type in (TransactionType.BUY, TransactionType.SELL):
+                    transactions.append(swap_tx)
+
+                # Throttling: 2 req/sec (Story 3.1 pattern)
+                if (i + 1) % 2 == 0:
+                    await asyncio.sleep(1.0)
+
+            except (httpx.HTTPError, ValueError, KeyError) as e:
+                log.warning(
+                    "transaction_fetch_parse_failed",
+                    signature=signature[:8] + "...",
+                    error=str(e),
+                )
+                continue
+
+        log.info(
+            "transactions_parsed",
+            wallet_address=wallet_address[:8] + "...",
+            total_signatures=len(signatures),
+            parsed_swaps=len(transactions),
+        )
+
+        return transactions
+
     def _match_trades(self, transactions: list[SwapTransaction]) -> list[Trade]:
         """Match BUY/SELL pairs to create completed trades (FIFO).
 
@@ -293,8 +379,8 @@ class DecayDetector:
 
                 trade = Trade(
                     token_mint=token_mint,
-                    entry_time=buy.timestamp,
-                    exit_time=sell.timestamp,
+                    entry_time=datetime.fromtimestamp(buy.timestamp, tz=UTC),
+                    exit_time=datetime.fromtimestamp(sell.timestamp, tz=UTC),
                     pnl=pnl,
                     profitable=profitable,
                 )
@@ -349,7 +435,7 @@ class DecayDetector:
         """
         if not wallet.last_activity_date:
             # No activity date recorded - assume very old
-            return 9999
+            return NO_ACTIVITY_DAYS
 
         now = datetime.now(UTC)
         delta = now - wallet.last_activity_date

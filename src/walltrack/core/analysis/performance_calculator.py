@@ -37,6 +37,7 @@ class PerformanceCalculator:
         self,
         transactions: list[SwapTransaction],
         token_launch_times: dict[str, datetime] | None = None,
+        min_profit_percent: float = 0.0,
     ) -> PerformanceMetrics:
         """Calculate performance metrics from transaction history.
 
@@ -45,6 +46,10 @@ class PerformanceCalculator:
             token_launch_times: Dict mapping token_mint to launch datetime.
                                Used for entry_delay_seconds calculation.
                                If None, entry_delay_seconds will be 0.
+            min_profit_percent: Minimum profit percentage to count as win (default: 0.0).
+                               AC2: Default value is 10% for production use.
+                               A trade is profitable if: exit_price >= entry_price * (1 + min_profit_percent/100)
+                               Example: min_profit_percent=10 means 10% minimum profit required.
 
         Returns:
             PerformanceMetrics object with calculated values.
@@ -73,7 +78,7 @@ class PerformanceCalculator:
             )
 
         # Match BUY/SELL pairs to create trades
-        trades = self._match_trades(transactions)
+        trades = self._match_trades(transactions, min_profit_percent=min_profit_percent)
 
         if not trades:
             log.debug("no_completed_trades_found", transaction_count=len(transactions))
@@ -116,13 +121,17 @@ class PerformanceCalculator:
 
         return metrics
 
-    def _match_trades(self, transactions: list[SwapTransaction]) -> list[Trade]:
+    def _match_trades(
+        self, transactions: list[SwapTransaction], min_profit_percent: float = 0.0
+    ) -> list[Trade]:
         """Match BUY/SELL pairs to create completed trades.
 
         Uses FIFO matching: oldest BUY matches oldest SELL for each token.
 
         Args:
             transactions: List of swap transactions.
+            min_profit_percent: Minimum profit percentage to count as win.
+                               Default 0.0 means any positive profit is a win.
 
         Returns:
             List of Trade objects representing completed BUY/SELL pairs.
@@ -158,7 +167,13 @@ class PerformanceCalculator:
 
             for buy, sell in zip(buys, sells):
                 pnl = sell.sol_amount - buy.sol_amount
-                profitable = pnl > 0
+
+                # Calculate profit percentage
+                profit_percent = ((sell.sol_amount - buy.sol_amount) / buy.sol_amount) * 100.0
+
+                # AC2: A trade is profitable if profit >= min_profit_percent
+                # Example: min_profit_percent=10 means exit_price >= entry_price * 1.10
+                profitable = profit_percent >= min_profit_percent
 
                 trade = Trade(
                     token_mint=token_mint,

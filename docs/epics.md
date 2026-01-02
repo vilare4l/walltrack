@@ -185,7 +185,7 @@ This document provides the complete epic and story breakdown for WallTrack, deco
 | FR19 | Epic 4 | Co-appearance detection (OUT OF SCOPE V2) |
 | FR20 | Epic 4 | Cluster grouping (watchlist only) |
 | FR21 | Epic 4 | Leader identification |
-| FR22 | Epic 4 | Score amplification |
+| FR22 | Epic 4 | Score amplification (OUT OF SCOPE V2) |
 | FR23 | Epic 5 | Webhook reception |
 | FR24 | Epic 5 | Wallet filtering |
 | FR25 | Epic 5 | Multi-factor scoring |
@@ -470,8 +470,16 @@ So that I can track smart money wallets.
 **Acceptance Criteria:**
 
 **Given** a discovered token
-**When** wallet discovery runs (via Helius transaction history)
-**Then** top buyers/sellers are extracted
+**When** wallet discovery runs (via Solana RPC Public: `getSignaturesForAddress` + `getTransaction`)
+**Then** wallets who bought early (<30min) and sold profitably (>50%) are identified
+
+**Technical Implementation:**
+- Use `rpc.getSignaturesForAddress(token_mint, limit=1000)` to get transaction signatures
+- For each signature: `rpc.getTransaction(signature)` to get full transaction data
+- Parse transactions manually to detect BUY/SELL events
+- Apply filters: early entry (<30min) AND profitable exit (>50%)
+- Result: Smart money wallets (performers), not bag holders (current holders)
+
 **And** wallets are stored in Supabase wallets table + Neo4j Wallet nodes
 
 **Given** wallet discovery completes
@@ -488,10 +496,15 @@ So that I can understand which wallets have edge.
 **Acceptance Criteria:**
 
 **Given** a wallet with transaction history
-**When** profiling runs
+**When** profiling runs (via Solana RPC Public: `getSignaturesForAddress(wallet_address)`)
 **Then** win_rate is calculated (profitable trades / total trades)
 **And** pnl_total is calculated (sum of trade profits/losses)
 **And** timing_percentile is calculated (how early they enter)
+
+**Technical Implementation:**
+- Use RPC transaction parser (shared from Story 3.1)
+- Fetch wallet history via `getSignaturesForAddress`
+- Same business logic, different data source
 
 **Given** wallet metrics are calculated
 **When** I view a wallet in Explorer
@@ -507,10 +520,14 @@ So that I can understand trading style.
 **Acceptance Criteria:**
 
 **Given** a wallet with sufficient history
-**When** behavioral profiling runs
+**When** behavioral profiling runs (via Solana RPC Public: `getSignaturesForAddress(wallet_address)`)
 **Then** activity_hours pattern is identified (when they trade)
 **And** position_size_style is classified (small/medium/large)
 **And** hold_duration_avg is calculated
+
+**Technical Implementation:**
+- Use RPC transaction parser (shared from Story 3.1)
+- Same behavioral analysis logic
 
 **Given** sidebar drill-down on a wallet
 **When** I click a wallet row
@@ -599,12 +616,14 @@ So that I can validate wallet profiling before building cluster analysis.
 
 **User Outcome:** Operator can discover wallet networks via funding relationships, see clusters for watchlisted wallets, and identify leaders.
 
-**FRs covered:** FR17, FR20, FR21, FR22, FR47
+**FRs covered:** FR17, FR20, FR21, FR47
+**FRs out of scope V2:** FR18 (SYNCED_BUY), FR19 (co-appearance), FR22 (score amplification)
 
 **Key Architectural Pattern:**
 - Network Discovery: When wallet is watchlisted, discover siblings via funders → profile → watchlist eval
 - Clustering: All Neo4j queries filter on `wallet_status = 'watchlisted'` (20-100x performance gain)
 - Relationships: FUNDED_BY only (V2 simplification - no SYNCED_BUY/TRADES_WITH)
+- **Purpose:** Network discovery and visualization ONLY - no cluster-based scoring in V2
 
 **Configuration:** Network discovery parameters in config table (enabled, max_siblings_per_funder, min_funding_amount, max_network_size, min_funder_contribution)
 
@@ -618,7 +637,13 @@ So that I can expand my watchlist with related high-quality wallets.
 
 **Given** a wallet transitions to 'watchlisted' status
 **When** network discovery triggers (configurable in config table)
-**Then** funder(s) are identified via Helius funding sources API
+**Then** funder(s) are identified via Solana RPC Public:
+- Fetch `getSignaturesForAddress(wallet)` and filter `SOL_TRANSFER` transactions
+- Extract sender addresses where `amount >= min_funding_amount`
+- Note: More complex than Helius API but feasible
+
+**Alternative**: Helius funding sources API as opt-in if RPC too complex
+
 **And** other wallets funded by same funder(s) are discovered (siblings)
 
 **Given** sibling wallets discovered
@@ -681,28 +706,29 @@ So that I can follow the most influential wallets.
 **Then** I see table with: Cluster ID, Leader, Member Count, Avg Score
 **And** can click to see all members
 
-#### Story 4.4: Cluster Drill-down & Score Amplification
+#### Story 4.4: Cluster Visualization & Drill-down
 
 As an operator,
-I want to see cluster details and understand score amplification,
-So that I know why certain signals are stronger.
+I want to see cluster details and relationships,
+So that I understand wallet network structure.
 
 **Acceptance Criteria:**
 
 **Given** a cluster in Explorer
 **When** I click on it
 **Then** sidebar shows all member wallets
-**And** displays cluster statistics (total PnL, avg win rate)
-
-**Given** cluster score amplification logic
-**When** multiple cluster wallets move on same token
-**Then** signal score is amplified per FR22
-**And** amplification factor is visible in signal details
+**And** displays cluster statistics (total PnL, avg win rate, member count)
 
 **Given** sidebar cluster view
 **When** I see the cluster
-**Then** I understand relationships visually
+**Then** I understand FUNDED_BY relationships visually
 **And** can navigate to any member wallet
+**And** can see cluster leader identification
+
+**V2 Simplification:**
+- Score amplification removed (out of scope - FR22 deferred)
+- Clusters are for network discovery and visualization only
+- No cluster-based scoring in V2 (simplified to Wallet + Token only)
 
 #### Story 4.5: Integration & E2E Validation
 
@@ -735,26 +761,40 @@ So that I can validate network discovery and clustering before building signal p
 **Given** Neo4j test fixtures with FUNDED_BY relationships
 **When** E2E tests run
 **Then** cluster grouping is validated
-**And** score amplification logic is correct
+**And** cluster visualization displays correctly
 
 ---
 
 ### Epic 5: Signal Pipeline
 
-**User Outcome:** Operator can receive real-time webhook signals and see multi-factor scores.
+**User Outcome:** Operator can receive real-time webhook signals and see two-factor scores (Wallet Quality + Token Characteristics).
 
-**FRs covered:** FR16, FR17, FR18, FR19, FR20, FR21
+**FRs covered:** FR23, FR24, FR25, FR26, FR27, FR28
 
-#### Story 5.1: Helius Webhook Reception
+**V2 Scoring Simplification:**
+- Two factors only: Wallet Quality (50%) + Token Characteristics (50%)
+- Cluster scoring removed (organizational relationships, not predictive)
+- Timing context merged into token characteristics (age is a token property)
+
+#### Story 5.1: Signal Detection (Dual-Mode: RPC Polling + Helius Webhooks)
 
 As an operator,
-I want to receive real-time swap notifications,
-So that I know when tracked wallets trade.
+I want to detect swap signals via configurable dual-mode approach,
+So that I can choose between free RPC polling or premium real-time webhooks.
 
 **Acceptance Criteria:**
 
-**Given** FastAPI webhook endpoint at /api/webhooks/helius
-**When** Helius sends a swap notification
+**Mode 1: RPC Polling (Default)**
+
+**Given** RPC polling worker configured (10-second intervals)
+**When** polling detects new SWAP transactions on watchlisted wallets
+**Then** signal is queued for processing
+**And** polling status shows "🟢 Polling: 2s ago (next: 8s)"
+
+**Mode 2: Helius Webhooks (Optional)**
+
+**Given** Helius API key configured + webhooks enabled in Config
+**When** Helius sends swap notification
 **Then** the webhook is received and validated via HMAC signature
 **And** raw payload is logged for debugging
 
@@ -767,6 +807,8 @@ So that I know when tracked wallets trade.
 **When** swap data is parsed
 **Then** wallet_address, token_address, amount, direction are extracted
 **And** signal processing pipeline is triggered
+
+**Configuration:** Config UI selector for mode (RPC Polling / Helius Webhooks)
 
 #### Story 5.2: Wallet Filtering
 
@@ -786,25 +828,28 @@ So that I don't process noise from unknown wallets.
 **Then** it is filtered out
 **And** logged as "blacklisted wallet signal ignored"
 
-#### Story 5.3: Multi-Factor Signal Scoring
+#### Story 5.3: Two-Factor Signal Scoring
 
 As an operator,
-I want signals scored using multiple factors,
-So that I can identify high-quality opportunities.
+I want signals scored using wallet quality and token characteristics,
+So that I can identify high-quality opportunities with a simple, predictive model.
 
 **Acceptance Criteria:**
 
 **Given** a signal from monitored wallet
 **When** scoring runs
-**Then** wallet_score contributes 35% (win rate, PnL, consistency)
-**And** cluster_score contributes 25% (cluster confirmation count)
-**And** token_score contributes 25% (liquidity, age, holder distribution)
-**And** context_score contributes 15% (timing, market conditions)
+**Then** wallet_score contributes 50% (win rate, PnL, timing_percentile, consistency)
+**And** token_score contributes 50% (liquidity, age, market cap, holder distribution)
 
 **Given** scoring completes
 **When** final score is calculated
 **Then** score is between 0.0 and 1.0
-**And** score breakdown is stored with signal
+**And** score breakdown is stored with signal (wallet_score, token_score, final_score)
+
+**V2 Simplification Rationale:**
+- Cluster scoring removed: FUNDED_BY relationships are organizational (network discovery), not predictive without SYNCED_BUY
+- Timing context merged: Token age is a token characteristic, market conditions deferred to V2+
+- Signal = 50% Wallet Quality × 50% Token Quality
 
 #### Story 5.4: Threshold Application & Token Characteristics
 

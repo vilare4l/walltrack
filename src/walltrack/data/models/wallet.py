@@ -6,8 +6,86 @@ All models use Pydantic BaseModel (not dataclass) per architecture rules.
 
 from datetime import datetime
 from decimal import Decimal
+from enum import Enum
 
 from pydantic import BaseModel, Field, field_validator
+
+
+class WalletStatus(str, Enum):
+    """Wallet lifecycle status for status-based filtering.
+
+    Status Lifecycle Flow:
+        discovered → profiled → watchlisted/ignored → flagged → removed/blacklisted
+
+    Attributes:
+        DISCOVERED: Story 3.1 - Just discovered from token holder analysis.
+        PROFILED: Story 3.2-3.3 - Performance and behavioral metrics calculated.
+        IGNORED: Story 3.5 - Failed watchlist criteria (auto evaluation).
+        WATCHLISTED: Story 3.5 - Passed watchlist criteria (auto evaluation).
+        FLAGGED: Story 3.4 - Decay detected (performance degradation).
+        REMOVED: Manual action - Removed from system.
+        BLACKLISTED: Manual action - Permanently excluded from all operations.
+
+    Example:
+        status = WalletStatus.WATCHLISTED
+        if status == WalletStatus.WATCHLISTED:
+            # Only process watchlisted wallets for clustering
+            process_wallet(wallet)
+    """
+
+    DISCOVERED = "discovered"
+    PROFILED = "profiled"
+    IGNORED = "ignored"
+    WATCHLISTED = "watchlisted"
+    FLAGGED = "flagged"
+    REMOVED = "removed"
+    BLACKLISTED = "blacklisted"
+
+
+class WatchlistDecision(BaseModel):
+    """Result of watchlist evaluation for a wallet.
+
+    Contains the decision status, composite score, reason, and timestamp.
+    Used by WatchlistEvaluator to return evaluation results.
+
+    Attributes:
+        status: Target wallet status (watchlisted or ignored).
+        score: Composite watchlist score (0.0000-1.0000).
+        reason: Why watchlisted or ignored (e.g., "Meets all criteria" or "Failed: win_rate < 0.70").
+        timestamp: When evaluation was performed.
+
+    Example:
+        decision = WatchlistDecision(
+            status=WalletStatus.WATCHLISTED,
+            score=Decimal("0.8523"),
+            reason="Meets all criteria",
+            timestamp=datetime.now(),
+        )
+    """
+
+    status: WalletStatus = Field(description="Target wallet status (watchlisted or ignored)")
+    score: Decimal = Field(description="Composite watchlist score (0.0000-1.0000)")
+    reason: str = Field(description="Why watchlisted or ignored")
+    timestamp: datetime = Field(default_factory=datetime.now, description="Evaluation timestamp")
+
+    @field_validator("score")
+    @classmethod
+    def validate_score_range(cls, v: Decimal) -> Decimal:
+        """Validate score is between 0.0000 and 1.0000.
+
+        Args:
+            v: Decimal value to validate.
+
+        Returns:
+            Validated Decimal value.
+
+        Raises:
+            ValueError: If value is outside 0.0000-1.0000 range.
+        """
+        if not Decimal("0.0") <= v <= Decimal("1.0"):
+            msg = f"Watchlist score must be between 0.0 and 1.0, got {v}"
+            raise ValueError(msg)
+        return v
 
 
 class WalletValidationResult(BaseModel):
@@ -65,6 +143,11 @@ class Wallet(BaseModel):
         consecutive_losses: Number of consecutive losing trades (Story 3.4).
         last_activity_date: Last trade activity date for dormancy detection (Story 3.4).
         rolling_win_rate: Win rate over most recent 20 trades (Story 3.4).
+        wallet_status: Lifecycle status (discovered → profiled → watchlisted/ignored → flagged → removed/blacklisted) (Story 3.5).
+        watchlist_added_date: Date wallet was added to watchlist (Story 3.5).
+        watchlist_score: Composite watchlist score (0.0000-1.0000) (Story 3.5).
+        watchlist_reason: Why wallet was watchlisted or ignored (Story 3.5).
+        manual_override: True if status was set manually (Story 3.5).
         created_at: Record creation timestamp.
         updated_at: Last modification timestamp.
 
@@ -132,6 +215,25 @@ class Wallet(BaseModel):
     )
     rolling_win_rate: Decimal | None = Field(
         default=None, description="Win rate over most recent 20 trades (AC1)"
+    )
+    # Watchlist management fields (Story 3.5)
+    wallet_status: WalletStatus = Field(
+        default=WalletStatus.DISCOVERED,
+        description="Wallet lifecycle status (discovered → profiled → watchlisted/ignored → flagged → removed/blacklisted)",
+    )
+    watchlist_added_date: datetime | None = Field(
+        default=None, description="Date wallet was added to watchlist (when status became 'watchlisted')"
+    )
+    watchlist_score: Decimal | None = Field(
+        default=None, description="Composite watchlist score (0.0000-1.0000) from evaluation criteria"
+    )
+    watchlist_reason: str | None = Field(
+        default=None,
+        description="Why wallet was watchlisted or ignored (e.g., 'Meets all criteria' or 'Failed: win_rate < 0.70')",
+    )
+    manual_override: bool = Field(
+        default=False,
+        description="True if status was set manually (not by automatic evaluation)",
     )
     created_at: datetime | None = Field(default=None, description="Record creation timestamp")
     updated_at: datetime | None = Field(default=None, description="Last modification timestamp")
@@ -355,6 +457,27 @@ class Wallet(BaseModel):
         allowed = {"unknown", "low", "medium", "high"}
         if v not in allowed:
             msg = f"Invalid behavioral_confidence: {v}. Must be one of {allowed}"
+            raise ValueError(msg)
+        return v
+
+    @field_validator("watchlist_score")
+    @classmethod
+    def validate_watchlist_score_range(cls, v: Decimal | None) -> Decimal | None:
+        """Validate watchlist_score is between 0.0000 and 1.0000.
+
+        Args:
+            v: Decimal value to validate.
+
+        Returns:
+            Validated Decimal value.
+
+        Raises:
+            ValueError: If value is outside 0.0000-1.0000 range.
+        """
+        if v is None:
+            return v
+        if not Decimal("0.0") <= v <= Decimal("1.0"):
+            msg = f"Watchlist score must be between 0.0 and 1.0, got {v}"
             raise ValueError(msg)
         return v
 

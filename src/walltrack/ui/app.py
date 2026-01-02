@@ -10,7 +10,7 @@ import structlog
 
 from walltrack.ui.components.sidebar import create_sidebar
 from walltrack.ui.components.status_bar import create_status_bar
-from walltrack.ui.pages import config, explorer, home
+from walltrack.ui.pages import config, explorer, home, tokens, wallets
 
 log = structlog.get_logger(__name__)
 
@@ -48,6 +48,18 @@ def create_dashboard() -> gr.Blocks:
         home.render()
 
     # Additional pages via routing
+    with app.route("Tokens", "/tokens"):
+        # Sidebar for tokens page
+        create_sidebar()
+        create_status_bar()
+        tokens.render()
+
+    with app.route("Wallets", "/wallets"):
+        # Sidebar for wallets page
+        create_sidebar()
+        create_status_bar()
+        wallets.render()
+
     with app.route("Explorer", "/explorer"):
         # Sidebar for explorer page
         create_sidebar()
@@ -60,6 +72,6 @@ def create_dashboard() -> gr.Blocks:
         create_status_bar()
         config.render()
 
-    log.info("dashboard_created", routes=["home", "explorer", "settings"])
+    log.info("dashboard_created", routes=["home", "tokens", "wallets", "explorer", "settings"])
 
     return app  # type: ignore[no-any-return]
