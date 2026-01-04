@@ -1,1 +1,0 @@
-"""Trailing stop implementation."""

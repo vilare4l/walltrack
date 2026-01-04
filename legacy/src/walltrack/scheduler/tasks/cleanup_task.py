@@ -1,1 +1,0 @@
-"""Cleanup scheduled task."""

@@ -1,1 +1,0 @@
-"""Scheduler tasks unit tests."""

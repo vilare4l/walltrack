@@ -1,1 +1,0 @@
-"""WallTrack test suite."""

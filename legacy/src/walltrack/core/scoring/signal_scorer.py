@@ -1,1 +1,0 @@
-"""Signal scoring logic."""

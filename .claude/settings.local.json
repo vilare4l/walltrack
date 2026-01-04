@@ -77,7 +77,14 @@
       "Bash(test:*)",
       "Bash(if not exist \"C:\\\\Users\\\\pc\\\\projects\\\\walltrack\\\\tests\\\\unit\\\\workers\" mkdir \"C:\\\\Users\\\\pc\\\\projects\\\\walltrack\\\\tests\\\\unit\\\\workers\")",
       "Bash(ls:*)",
-      "Bash(powershell -Command \"Get-Content ''C:\\\\Users\\\\pc\\\\projects\\\\walltrack\\\\docs\\\\sprint-artifacts\\\\epic-3\\\\3-5-5-global-rate-limiter-discovery-worker.md'' | Select-Object -Last 50\")"
+      "Bash(powershell -Command \"Get-Content ''C:\\\\Users\\\\pc\\\\projects\\\\walltrack\\\\docs\\\\sprint-artifacts\\\\epic-3\\\\3-5-5-global-rate-limiter-discovery-worker.md'' | Select-Object -Last 50\")",
+      "WebSearch",
+      "Bash(if not exist \"C:\\\\Users\\\\pc\\\\projects\\\\walltrack\\\\tests\\\\unit\\\\config\" mkdir \"C:\\\\Users\\\\pc\\\\projects\\\\walltrack\\\\tests\\\\unit\\\\config\")",
+      "Bash(powershell -Command \"Get-Content ''C:\\\\Users\\\\pc\\\\projects\\\\walltrack\\\\.env.example'' | Select-Object -Last 50\")",
+      "Bash(powershell -Command \"Select-String -Path ''C:\\\\Users\\\\pc\\\\projects\\\\walltrack\\\\.env.example'' -Pattern ''SOLANA_RPC'' -Context 5,5\")",
+      "Bash(powershell -Command:*)",
+      "Bash(del \"C:\\\\Users\\\\pc\\\\projects\\\\walltrack\\\\src\\\\walltrack\\\\data\\\\models\\\\token.py\")",
+      "Bash(del \"C:\\\\Users\\\\pc\\\\projects\\\\walltrack\\\\src\\\\walltrack\\\\data\\\\supabase\\\\repositories\\\\token_repo.py\")"
     ]
   }
 }

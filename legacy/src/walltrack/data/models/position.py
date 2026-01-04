@@ -1,1 +1,0 @@
-"""Position data model."""
