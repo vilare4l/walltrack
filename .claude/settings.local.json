@@ -84,7 +84,12 @@
       "Bash(powershell -Command \"Select-String -Path ''C:\\\\Users\\\\pc\\\\projects\\\\walltrack\\\\.env.example'' -Pattern ''SOLANA_RPC'' -Context 5,5\")",
       "Bash(powershell -Command:*)",
       "Bash(del \"C:\\\\Users\\\\pc\\\\projects\\\\walltrack\\\\src\\\\walltrack\\\\data\\\\models\\\\token.py\")",
-      "Bash(del \"C:\\\\Users\\\\pc\\\\projects\\\\walltrack\\\\src\\\\walltrack\\\\data\\\\supabase\\\\repositories\\\\token_repo.py\")"
+      "Bash(del \"C:\\\\Users\\\\pc\\\\projects\\\\walltrack\\\\src\\\\walltrack\\\\data\\\\supabase\\\\repositories\\\\token_repo.py\")",
+      "WebFetch(domain:www.helius.dev)",
+      "WebFetch(domain:dev.jup.ag)",
+      "WebFetch(domain:docs.dexscreener.com)",
+      "WebFetch(domain:pypi.org)",
+      "Skill(bmad:bmm:workflows:create-epics-stories)"
     ]
   }
 }

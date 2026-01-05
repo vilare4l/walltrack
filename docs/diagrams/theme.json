@@ -1,0 +1,11 @@
+{
+  "name": "Professional",
+  "colors": {
+    "table": "#e3f2fd",
+    "primary_key": "#1976d2",
+    "foreign_key": "#1976d2",
+    "border": "#1976d2",
+    "text": "#1e1e1e",
+    "arrow": "#1976d2"
+  }
+}

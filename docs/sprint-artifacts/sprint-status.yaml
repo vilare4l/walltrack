@@ -1,0 +1,83 @@
+# generated: 2026-01-05
+# project: walltrack
+# project_key:
+# tracking_system: file-system
+# story_location: C:\Users\pc\projects\walltrack\docs\sprint-artifacts
+
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+#
+# Epic Status Transitions:
+#   - backlog → in-progress: Automatically when first story is created (via create-story)
+#   - in-progress → done: Manually when all stories reach 'done' status
+#
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - drafted: Story file created in stories folder
+#   - ready-for-dev: Draft approved and story context created
+#   - in-progress: Developer actively working on implementation
+#   - review: Ready for code review (via Dev's code-review workflow)
+#   - done: Story completed
+#
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - completed: Retrospective has been done
+#
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when first story is created
+# - Stories can be worked in parallel if team capacity allows
+# - SM typically drafts next story after previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+
+generated: 2026-01-05
+project: walltrack
+project_key:
+tracking_system: file-system
+story_location: C:\Users\pc\projects\walltrack\docs\sprint-artifacts
+
+development_status:
+  epic-1: in-progress
+  1-1-database-schema-migration-mock-data: done
+  1-2-gradio-application-shell-three-tab-navigation: ready-for-dev
+  1-3-dashboard-tab-performance-metrics-positions-table: backlog
+  1-4-watchlist-tab-wallets-table-action-bar: backlog
+  1-5-config-tab-accordion-sections-form-layouts: backlog
+  1-6-interactive-sidebars-table-click-handlers-detail-views: backlog
+  epic-1-retrospective: optional
+
+  epic-2: backlog
+  2-1-watchlist-crud-operations-add-edit-remove-wallets: backlog
+  2-2-helius-webhook-registration-global-address-monitoring: backlog
+  2-3-webhook-signal-reception-storage: backlog
+  2-4-token-safety-analysis-multi-source-scoring: backlog
+  2-5-signal-filtering-logic-audit-trail: backlog
+  epic-2-retrospective: optional
+
+  epic-3: backlog
+  3-1-position-creation-from-safe-signals-dual-mode-execution: backlog
+  3-2-real-time-price-monitoring-jupiter-dexscreener-fallback: backlog
+  3-3-stop-loss-trailing-stop-exit-strategies: backlog
+  3-4-scaling-out-exit-strategy: backlog
+  3-5-exit-strategy-execution-engine-priority-logic-order-creation: backlog
+  epic-3-retrospective: optional
+
+  epic-4: backlog
+  4-1-source-wallet-sell-detection-for-mirror-exit: backlog
+  4-2-performance-metrics-calculation-win-rate-pnl-signal-counts: backlog
+  4-3-performance-materialized-view-daily-batch-refresh: backlog
+  4-4-wallet-promotion-demotion-mode-switching: backlog
+  4-5-fake-wallet-detection-curation-insights: backlog
+  epic-4-retrospective: optional
+
+  epic-5: backlog
+  5-1-system-configuration-management-capital-risk-limits-safety: backlog
+  5-2-exit-strategy-templates-create-edit-delete: backlog
+  5-3-circuit-breaker-logic-automatic-position-blocking: backlog
+  5-4-circuit-breaker-reset-event-logging: backlog
+  5-5-system-health-monitoring-status-indicators: backlog
+  epic-5-retrospective: optional

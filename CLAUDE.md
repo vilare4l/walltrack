@@ -89,25 +89,29 @@ CREATE TABLE IF NOT EXISTS walltrack.table_name (
 
 ---
 
-## Stack technique
+## Stack technique (MVP)
 
 - Python 3.11+ / FastAPI / Gradio
 - Supabase (PostgreSQL) - données, config
-- Neo4j - clusters/relations wallets
 - httpx async / Pydantic v2
+
+**Future Extensions:**
+- Neo4j - clusters/relations wallets (Phase 3+)
 
 ---
 
-## Flow fonctionnel à reconstruire
+## Flow fonctionnel à reconstruire (MVP)
 
 1. Discovery tokens (manuel)
 2. Surveillance tokens (scheduler)
 3. Discovery wallets
-4. Profiling + Clustering (Neo4j)
-5. Webhooks Helius
-6. Scoring signals
-7. Positions
-8. Orders (entry/exit)
+4. Webhooks Helius
+5. Scoring signals
+6. Positions
+7. Orders (entry/exit)
+
+**Future Enhancements:**
+- Profiling + Clustering (Neo4j) - Phase 3+
 
 ---
 
